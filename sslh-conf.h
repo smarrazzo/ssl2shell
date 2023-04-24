@@ -104,6 +104,8 @@ struct sslhcfg_item {
 	int	logfile_is_present;
 	char*	logfile;
 	char*	on_timeout;
+	int     magic_is_present;
+    char*   magic;
 	char*	prefix;
 	size_t	listen_len;
 	struct sslhcfg_listen_item* listen;

