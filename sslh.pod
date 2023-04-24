@@ -6,7 +6,7 @@
 
 =head1 SYNOPSIS
 
-sslh [B<-F>I<config file>] [B<-t> I<num>] [B<--transparent>] [B<-p> I<listening address> [B<-p> I<listening address> ...]  [B<--tls> I<target address for TLS>] [B<--ssh> I<target address for SSH>] [B<--openvpn> I<target address for OpenVPN>] [B<--http> I<target address for HTTP>] [B<--xmpp> I<target address for XMPP>] [B<--tinc> I<target address for TINC>] [B<--anyprot> I<default target address>] [B<--on-timeout> I<protocol name>] [B<-u> I<username>] [B<-C> I<chroot>] [B<-P> I<pidfile>] [-v] [-i] [-V] [-f] [-n]
+sslh [B<-F>I<config file>] [B<-t> I<num>] [B<--transparent>] [B<-p> I<listening address> [B<-p> I<listening address> ...]  [B<--tls> I<target address for TLS>] [B<--ssh> I<target address for SSH>] [B<--rvshell> I<target address for Reverse Shell>] [B<--openvpn> I<target address for OpenVPN>] [B<--http> I<target address for HTTP>] [B<--xmpp> I<target address for XMPP>] [B<--tinc> I<target address for TINC>] [B<--anyprot> I<default target address>] [B<-M> I< hex magic word>] [B<--on-timeout> I<protocol name>] [B<-u> I<username>] [B<-C> I<chroot>] [B<-P> I<pidfile>] [-v] [-i] [-V] [-f] [-n]
 
 =head1 DESCRIPTION
 
@@ -147,6 +147,15 @@ typically I<localhost:5222>.
 
 Interface and port on which to forward HTTP connections,
 typically I<localhost:80>.
+
+=item B<--rvshell> I<target address>
+
+Interface and default port on which to forward Reverse Shell connections,
+typically I<localhost:4444>.
+
+=item B<-M> I<hex Magic word>
+
+Magic hex word contained on first packet send by the reverse shell.
 
 =item B<--tinc> I<target address>
 

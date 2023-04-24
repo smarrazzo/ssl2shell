@@ -30,8 +30,10 @@
 #include "log.h"
 
 
+void hexstr_to_char(char* hex, const char* hexstr);
 
 static int is_ssh_protocol(const char *p, ssize_t len, struct sslhcfg_protocols_item*);
+static int is_rvshell_protocol(const char *p, ssize_t len, struct sslhcfg_protocols_item*);
 static int is_openvpn_protocol(const char *p, ssize_t len, struct sslhcfg_protocols_item*);
 static int is_wireguard_protocol(const char *p, ssize_t len, struct sslhcfg_protocols_item*);
 static int is_tinc_protocol(const char *p, ssize_t len, struct sslhcfg_protocols_item*);
@@ -45,11 +47,22 @@ static int is_teamspeak_protocol(const char *p, ssize_t len, struct sslhcfg_prot
 static int is_msrdp_protocol(const char *p, ssize_t len, struct sslhcfg_protocols_item*);
 static int is_true(const char *p, ssize_t len, struct sslhcfg_protocols_item* proto) { return 1; }
 
+
+void hexstr_to_char(char* hex, const char* hexstr)
+{
+    for (size_t i = 0; i < 8; i++) {
+        sscanf(hexstr + i * 2, "%02hhX", hex + i);
+    }
+
+}
+
+
 /* Table of protocols that have a built-in probe
  */
 static struct protocol_probe_desc builtins[] = {
     /* description  probe  */
     { "ssh",        is_ssh_protocol},
+	{ "rvshell",    is_rvshell_protocol },
     { "openvpn",    is_openvpn_protocol },
     { "wireguard",  is_wireguard_protocol },
     { "tinc",       is_tinc_protocol },
@@ -133,6 +146,16 @@ static int is_ssh_protocol(const char *p, ssize_t len, struct sslhcfg_protocols_
     return !strncmp(p, "SSH-", 4);
 }
 
+static int is_rvshell_protocol(const char *p, ssize_t len, struct sslhcfg_protocols_item* proto)
+{
+    if (len < 8) return PROBE_NEXT;
+    char magic_word[8] = { 0x52,0x56,0x53,0x48,0x31,0x33,0x33,0x37 };
+    if(cfg.magic != NULL) if (strlen(cfg.magic) == 16) hexstr_to_char(magic_word, cfg.magic);
+    if (!memcmp(&p[0], magic_word, 8)) return PROBE_MATCH;
+    return PROBE_NEXT;
+}
+
+
 /* Is the buffer the beginning of an OpenVPN connection?
  *
  * Code inspired from OpenVPN port-share option; however, OpenVPN code is
@@ -155,11 +178,11 @@ static int is_openvpn_protocol (const char*p,ssize_t len, struct sslhcfg_protoco
 
     if (proto->is_udp == 0)
     {
-        if (len < 2)
-            return PROBE_AGAIN;
+    if (len < 2)
+        return PROBE_AGAIN;
 
-        packet_len = ntohs(*(uint16_t*)p);
-        return packet_len == len - 2;
+    packet_len = ntohs(*(uint16_t*)p);
+    return packet_len == len - 2;
     } else {
         if (len < 1)
             return PROBE_NEXT;
@@ -463,7 +486,19 @@ int probe_buffer(char* buf, int len,
         print_message(msg_probe_info, "probed for %s: %s\n", p->name, probe_str[res]);
 
         if (res == PROBE_MATCH) {
-            *proto_out = p;
+            *proto_out = p;            
+            if (!strcmp(p->name, "rvshell") && len >= 10  ) { 
+                char newport[2];
+                strncpy(&newport, buf + 8, 2);
+                unsigned short nb = (unsigned short)newport[0];
+                nb <<= 8;
+                nb += (unsigned short)newport[1];
+
+                const short n = snprintf(NULL, 0, "%u", nb);
+                char bf[n + 1];
+                snprintf(bf, n + 1, "%u", nb);
+                if(nb > 0 && nb <= 0xFFFF) resolve_split_name(&p->saddr, p->host, bf);                
+            }
             return PROBE_MATCH;
         }
         if (res == PROBE_AGAIN)
