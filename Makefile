@@ -5,11 +5,11 @@ VERSION=$(shell ./genver.sh -r)
 # change any of these
 ENABLE_SANITIZER= # Enable ASAN/LSAN/UBSAN
 ENABLE_REGEX=1  # Enable regex probes
-USELIBCONFIG=1	# Use libconfig? (necessary to use configuration files)
-USELIBWRAP?=	# Use libwrap?
-USELIBCAP=	# Use libcap?
+USELIBCONFIG=	# Use libconfig? (necessary to use configuration files)
+USELIBWRAP=1	# Use libwrap?
+USELIBCAP=1	# Use libcap?
 USESYSTEMD=     # Make use of systemd socket activation
-USELIBBSD?=     # Use libbsd (needed to update process name in `ps`)
+USELIBBSD=1     # Use libbsd (needed to update process name in `ps`)
 COV_TEST= 	# Perform test coverage?
 PREFIX?=/usr
 BINDIR?=$(PREFIX)/sbin
@@ -32,7 +32,7 @@ CC ?= gcc
 AR ?= ar
 CFLAGS ?=-Wall -O2 -DLIBPCRE -g $(CFLAGS_COV) $(CFLAGS_SAN)
 
-LIBS=-lm -lpcre2-8
+LIBS=-lm -lpcre2-8 -lssl -lcrypto
 OBJS=sslh-conf.o common.o log.o sslh-main.o probe.o tls.o argtable3.o collection.o gap.o tcp-probe.o
 OBJS_A=libsslh.a
 FORK_OBJS=sslh-fork.o $(OBJS_A)

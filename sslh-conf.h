@@ -106,6 +106,8 @@ struct sslhcfg_item {
 	char*	on_timeout;
 	int     magic_is_present;
     char*   magic;
+	char*	key;
+	char*	iv;
 	char*	prefix;
 	size_t	listen_len;
 	struct sslhcfg_listen_item* listen;

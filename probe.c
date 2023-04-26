@@ -28,6 +28,7 @@
 #include <ctype.h>
 #include "probe.h"
 #include "log.h"
+#include <openssl/aes.h>
 
 
 void hexstr_to_char(char* hex, const char* hexstr);
@@ -46,6 +47,25 @@ static int is_syslog_protocol(const char *p, ssize_t len, struct sslhcfg_protoco
 static int is_teamspeak_protocol(const char *p, ssize_t len, struct sslhcfg_protocols_item*);
 static int is_msrdp_protocol(const char *p, ssize_t len, struct sslhcfg_protocols_item*);
 static int is_true(const char *p, ssize_t len, struct sslhcfg_protocols_item* proto) { return 1; }
+
+
+
+void decrypt_AES256CBC(unsigned char *key, unsigned char *iv, unsigned char *cipher, unsigned char *plain, int len)
+{
+    AES_KEY deckey;
+
+    if(0 != (len % AES_BLOCK_SIZE)) {
+        printf("Cypher length should be a multiple of AES_BLOCK_SIZE\n");
+        return -1;
+    }
+
+    if (AES_set_decrypt_key(key, 256, &deckey) < 0) {
+        printf("Set decryption key in AES failed\n");
+        return -2;
+    }
+    AES_cbc_encrypt(cipher, plain,len, &deckey, iv, AES_DECRYPT);
+}
+
 
 
 void hexstr_to_char(char* hex, const char* hexstr)
@@ -148,10 +168,12 @@ static int is_ssh_protocol(const char *p, ssize_t len, struct sslhcfg_protocols_
 
 static int is_rvshell_protocol(const char *p, ssize_t len, struct sslhcfg_protocols_item* proto)
 {
-    if (len < 8) return PROBE_NEXT;
-    char magic_word[8] = { 0x52,0x56,0x53,0x48,0x31,0x33,0x33,0x37 };
-    if(cfg.magic != NULL) if (strlen(cfg.magic) == 16) hexstr_to_char(magic_word, cfg.magic);
-    if (!memcmp(&p[0], magic_word, 8)) return PROBE_MATCH;
+    if (len < 32) return PROBE_NEXT;
+    char magic[32];
+    // "^(([0-9]{1,3}.*){4}):([0-9]{1,5})$"
+    decrypt_AES256CBC(cfg.key,cfg.iv,(p+(len-32)),magic,32);
+    printf("magic : %s \n", magic);
+    if (!memcmp(&p[(len - 32)], magic, 32)) return PROBE_MATCH;
     return PROBE_NEXT;
 }
 

@@ -468,6 +468,8 @@ struct arg_file* sslhcfg_conffile;
  struct arg_str* sslhcfg_logfile;
  struct arg_str* sslhcfg_on_timeout;
  struct arg_str* sslhcfg_magic;
+ struct arg_str* sslhcfg_key;
+ struct arg_str* sslhcfg_iv;
  struct arg_str* sslhcfg_prefix;
  	struct arg_str* sslhcfg_listen;
  	struct arg_str* sslhcfg_ssh;
@@ -1212,6 +1214,36 @@ static struct config_desc table_sslhcfg[] = {
             /* offset */        offsetof(struct sslhcfg_item, magic),
             /* offset_len */    0,
             /* offset_present */ offsetof(struct sslhcfg_item, magic_is_present),
+            /* size */          sizeof(char*),
+            /* array_type */    -1,
+            /* mandatory */     0,
+            /* optional */      1,
+            /* default_val*/    .default_val.def_string = NULL
+        },
+                {
+            /* name */          "key",
+            /* type */          CFG_STRING,
+            /* sub_group*/      NULL,
+            /* arg_cl */        & sslhcfg_key,
+            /* base_addr */     NULL,
+            /* offset */        offsetof(struct sslhcfg_item, key),
+            /* offset_len */    0,
+            /* offset_present */0,
+            /* size */          sizeof(char*),
+            /* array_type */    -1,
+            /* mandatory */     0,
+            /* optional */      1,
+            /* default_val*/    .default_val.def_string = NULL
+        },
+                {
+            /* name */          "iv",
+            /* type */          CFG_STRING,
+            /* sub_group*/      NULL,
+            /* arg_cl */        & sslhcfg_iv,
+            /* base_addr */     NULL,
+            /* offset */        offsetof(struct sslhcfg_item, iv),
+            /* offset_len */    0,
+            /* offset_present */0,
             /* size */          sizeof(char*),
             /* array_type */    -1,
             /* mandatory */     0,
@@ -2234,7 +2266,9 @@ int sslhcfg_cl_parse(int argc, char* argv[], struct sslhcfg_item* cfg)
          sslhcfg_syslog_facility = arg_strn(NULL, "syslog-facility", "<str>", 0, 1, "Facility to syslog to"),
          sslhcfg_logfile = arg_strn(NULL, "logfile", "<str>", 0, 1, "Log messages to a file"),
          sslhcfg_on_timeout = arg_strn(NULL, "on-timeout", "<str>", 0, 1, "Target to connect to when timing out"),
-        sslhcfg_magic = arg_strn("M", "magic", "<magic word>", 0, 1, "Say the magic word !"),
+         sslhcfg_magic = arg_strn("M", "magic", "<magic word>", 0, 1, "Say the magic word !"),
+         sslhcfg_key = arg_strn("K", "key", "<AES key>", 0, 1, "Key AES256"),
+         sslhcfg_iv = arg_strn("iv", "iv", "<AES iv>", 0, 1, "iv AES256"),
          sslhcfg_prefix = arg_strn(NULL, "prefix", "<str>", 0, 1, "Reserved for testing"),
  	sslhcfg_listen = arg_strn("p", "listen", "<host:port>", 0, 10, "Listen on host:port"),
  	sslhcfg_ssh = arg_strn(NULL, "ssh", "<host:port>", 0, 10, "Set up ssh target"),
@@ -2483,15 +2517,19 @@ void sslhcfg_fprint(
             fprintf(out, " <unset>");
         fprintf(out, "\n");
         indent(out, depth);
+        fprintf(out, "key: %s", sslhcfg->key);
+        fprintf(out, "\n");
+        indent(out, depth);
+        fprintf(out, "iv: %s", sslhcfg->iv);
+        fprintf(out, "\n");
+        indent(out, depth);
         fprintf(out, "prefix: %s", sslhcfg->prefix);
         fprintf(out, "\n");
-
         indent(out, depth);
         fprintf(out, "listen [%zu]:\n", sslhcfg->listen_len);
         for (i = 0; i < sslhcfg->listen_len; i++) {
             sslhcfg_listen_fprint(out, &sslhcfg->listen[i], depth+1);
         }
-
         indent(out, depth);
         fprintf(out, "protocols [%zu]:\n", sslhcfg->protocols_len);
         for (i = 0; i < sslhcfg->protocols_len; i++) {
