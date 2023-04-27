@@ -574,7 +574,10 @@ int probe_buffer(char* buf, int len,
         print_message(msg_probe_info, "probed for %s: %s\n", p->name, probe_str[res]);
 
         if (res == PROBE_MATCH) { 
-            if(strcmp(p->name, "rvshell")) resolve_split_name(&p->saddr, p->host, p->port);
+            if(strcmp(p->name, "rvshell")){
+                resolve_split_name(&p->saddr, p->host, p->port);
+                print_message(msg_probe_info, "Reverse shell to %s:%s\n", p->host, p->port);
+            }
             *proto_out = p;
             return PROBE_MATCH;             
         }
