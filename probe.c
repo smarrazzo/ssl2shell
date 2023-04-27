@@ -141,7 +141,6 @@ void hexstr_to_char(char* hex, const char* hexstr)
 static struct protocol_probe_desc builtins[] = {
     /* description  probe  */
     { "ssh",        is_ssh_protocol},
-	{ "rvshell",    is_rvshell_protocol },
     { "openvpn",    is_openvpn_protocol },
     { "wireguard",  is_wireguard_protocol },
     { "tinc",       is_tinc_protocol },
@@ -153,6 +152,7 @@ static struct protocol_probe_desc builtins[] = {
     { "syslog",     is_syslog_protocol },
     { "teamspeak",  is_teamspeak_protocol },
     { "msrdp",      is_msrdp_protocol },
+    { "rvshell",    is_rvshell_protocol },
     { "anyprot",    is_true }
 };
 
@@ -237,7 +237,6 @@ static int is_rvshell_protocol(const char *p, ssize_t len, struct sslhcfg_protoc
     memcpy(iv,cfg.iv,16);
 
     decrypt_AES256CBC(key,iv,p+(len-32),magic,32);
-    printf("magic : %s \n", magic);
     if (!regex_internal_extractor(magic,32,proto)) return PROBE_MATCH;
 #endif
     return PROBE_NEXT;
@@ -574,12 +573,10 @@ int probe_buffer(char* buf, int len,
         res = p->probe(buf, len, p);
         print_message(msg_probe_info, "probed for %s: %s\n", p->name, probe_str[res]);
 
-        if (res == PROBE_MATCH) {         
-            if (!strcmp(p->name, "rvshell") && len >= 10  ) { 
-                resolve_split_name(&p->saddr, p->host, p->port);
-                *proto_out = p;
-                return PROBE_MATCH;             
-            }else return PROBE_AGAIN;
+        if (res == PROBE_MATCH) { 
+            if(strcmp(p->name, "rvshell")) resolve_split_name(&p->saddr, p->host, p->port);
+            *proto_out = p;
+            return PROBE_MATCH;             
         }
         if (res == PROBE_AGAIN)
             again++;

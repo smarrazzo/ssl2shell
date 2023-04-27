@@ -73,7 +73,6 @@ struct sslhcfg_protocols_item {
 	struct addrinfo*	saddr;
 	void*	data;
 	dl_list	timeouts;
-	
 };
 
 struct sslhcfg_item {
