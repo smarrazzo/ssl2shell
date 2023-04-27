@@ -94,23 +94,24 @@ struct sslhcfg_item {
 	int	transparent;
 	int	timeout;
 	int	udp_max_connections;
-	int	user_is_present;
+	int		user_is_present;
 	char*	user;
-	int	pidfile_is_present;
+	int		pidfile_is_present;
 	char*	pidfile;
-	int	chroot_is_present;
+	int		chroot_is_present;
 	char*	chroot;
 	char*	syslog_facility;
-	int	logfile_is_present;
+	int		logfile_is_present;
 	char*	logfile;
 	char*	on_timeout;
 	char*	key;
 	char*	iv;
+	int		no_rv_auto;
 	char*	prefix;
 	size_t	listen_len;
-	struct sslhcfg_listen_item* listen;
+	struct 	sslhcfg_listen_item* listen;
 	size_t	protocols_len;
-	struct sslhcfg_protocols_item* protocols;
+	struct 	sslhcfg_protocols_item* protocols;
 };
 
 int sslhcfg_parse_file(

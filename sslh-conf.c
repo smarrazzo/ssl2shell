@@ -469,6 +469,7 @@ struct arg_str* sslhcfg_logfile;
 struct arg_str* sslhcfg_on_timeout;
 struct arg_str* sslhcfg_key;
 struct arg_str* sslhcfg_iv;
+struct arg_str* sslhcfg_no_rv_auto;
 struct arg_str* sslhcfg_prefix;
 struct arg_str* sslhcfg_listen;
 struct arg_str* sslhcfg_ssh;
@@ -1251,6 +1252,22 @@ static struct config_desc table_sslhcfg[] = {
             /* optional */      1,
             /* default_val*/    .default_val.def_string = NULL
         },
+        
+        { 
+            /* name */          "no_rv_auto", 
+            /* type */          CFG_BOOL, 
+            /* sub_group*/      NULL,
+            /* arg_cl */        & sslhcfg_no_rv_auto,
+            /* base_addr */     NULL,
+            /* offset */        offsetof(struct sslhcfg_item, no_rv_auto),
+            /* offset_len */    0,
+            /* offset_present */ 0,
+            /* size */          sizeof(int), 
+            /* array_type */    -1,
+            /* mandatory */     0, 
+            /* optional */      0, 
+            /* default_val*/    .default_val.def_bool = 0 
+        },
 
         { 
             /* name */          "listen", 
@@ -1406,7 +1423,7 @@ static struct compound_cl_arg compound_cl_args[] = {
         {   /* arg: listen */
             .regex =           "(.+):(\\w+)",
             .arg_cl =          & sslhcfg_listen,
-            .base_entry =      & table_sslhcfg [27],
+            .base_entry =      & table_sslhcfg [28],
             .targets =         sslhcfg_listen_targets,
 
 
@@ -1418,7 +1435,7 @@ static struct compound_cl_arg compound_cl_args[] = {
         {   /* arg: ssh */
             .regex =           "(.+):(\\w+)",
             .arg_cl =          & sslhcfg_ssh,
-            .base_entry =      & table_sslhcfg [28],
+            .base_entry =      & table_sslhcfg [29],
             .targets =         sslhcfg_ssh_targets,
 
 
@@ -1430,7 +1447,7 @@ static struct compound_cl_arg compound_cl_args[] = {
         {   /* arg: tls */
             .regex =           "(.+):(\\w+)",
             .arg_cl =          & sslhcfg_tls,
-            .base_entry =      & table_sslhcfg [28],
+            .base_entry =      & table_sslhcfg [29],
             .targets =         sslhcfg_tls_targets,
 
 
@@ -1442,7 +1459,7 @@ static struct compound_cl_arg compound_cl_args[] = {
         {   /* arg: openvpn */
             .regex =           "(.+):(\\w+)",
             .arg_cl =          & sslhcfg_openvpn,
-            .base_entry =      & table_sslhcfg [28],
+            .base_entry =      & table_sslhcfg [29],
             .targets =         sslhcfg_openvpn_targets,
 
 
@@ -1454,7 +1471,7 @@ static struct compound_cl_arg compound_cl_args[] = {
         {   /* arg: tinc */
             .regex =           "(.+):(\\w+)",
             .arg_cl =          & sslhcfg_tinc,
-            .base_entry =      & table_sslhcfg [28],
+            .base_entry =      & table_sslhcfg [29],
             .targets =         sslhcfg_tinc_targets,
 
 
@@ -1466,7 +1483,7 @@ static struct compound_cl_arg compound_cl_args[] = {
         {   /* arg: wireguard */
             .regex =           "(.+):(\\w+)",
             .arg_cl =          & sslhcfg_wireguard,
-            .base_entry =      & table_sslhcfg [28],
+            .base_entry =      & table_sslhcfg [29],
             .targets =         sslhcfg_wireguard_targets,
 
 
@@ -1478,7 +1495,7 @@ static struct compound_cl_arg compound_cl_args[] = {
         {   /* arg: xmpp */
             .regex =           "(.+):(\\w+)",
             .arg_cl =          & sslhcfg_xmpp,
-            .base_entry =      & table_sslhcfg [28],
+            .base_entry =      & table_sslhcfg [29],
             .targets =         sslhcfg_xmpp_targets,
 
 
@@ -1490,7 +1507,7 @@ static struct compound_cl_arg compound_cl_args[] = {
         {   /* arg: http */
             .regex =           "(.+):(\\w+)",
             .arg_cl =          & sslhcfg_http,
-            .base_entry =      & table_sslhcfg [28],
+            .base_entry =      & table_sslhcfg [29],
             .targets =         sslhcfg_http_targets,
 
 
@@ -1502,7 +1519,7 @@ static struct compound_cl_arg compound_cl_args[] = {
         {   /* arg: adb */
             .regex =           "(.+):(\\w+)",
             .arg_cl =          & sslhcfg_adb,
-            .base_entry =      & table_sslhcfg [28],
+            .base_entry =      & table_sslhcfg [29],
             .targets =         sslhcfg_adb_targets,
 
 
@@ -1514,7 +1531,7 @@ static struct compound_cl_arg compound_cl_args[] = {
         {   /* arg: socks5 */
             .regex =           "(.+):(\\w+)",
             .arg_cl =          & sslhcfg_socks5,
-            .base_entry =      & table_sslhcfg [28],
+            .base_entry =      & table_sslhcfg [29],
             .targets =         sslhcfg_socks5_targets,
 
 
@@ -1526,7 +1543,7 @@ static struct compound_cl_arg compound_cl_args[] = {
         {   /* arg: syslog */
             .regex =           "(.+):(\\w+)",
             .arg_cl =          & sslhcfg_syslog,
-            .base_entry =      & table_sslhcfg [28],
+            .base_entry =      & table_sslhcfg [29],
             .targets =         sslhcfg_syslog_targets,
 
 
@@ -1538,7 +1555,7 @@ static struct compound_cl_arg compound_cl_args[] = {
         {   /* arg: msrdp */
             .regex =           "(.+):(\\w+)",
             .arg_cl =          & sslhcfg_msrdp,
-            .base_entry =      & table_sslhcfg [28],
+            .base_entry =      & table_sslhcfg [29],
             .targets =         sslhcfg_msrdp_targets,
 
 
@@ -1550,7 +1567,7 @@ static struct compound_cl_arg compound_cl_args[] = {
         {   /* arg: rvshell */
             .regex =           "(.+):(\\w+)",
             .arg_cl =          & sslhcfg_rvshell,
-            .base_entry =      & table_sslhcfg [28],
+            .base_entry =      & table_sslhcfg [29],
             .targets =         sslhcfg_rvshell_targets,
 
 
@@ -1562,7 +1579,7 @@ static struct compound_cl_arg compound_cl_args[] = {
         {   /* arg: anyprot */
             .regex =           "(.+):(\\w+)",
             .arg_cl =          & sslhcfg_anyprot,
-            .base_entry =      & table_sslhcfg [28],
+            .base_entry =      & table_sslhcfg [29],
             .targets =         sslhcfg_anyprot_targets,
 
 
@@ -2253,6 +2270,7 @@ int sslhcfg_cl_parse(int argc, char* argv[], struct sslhcfg_item* cfg)
     sslhcfg_on_timeout = arg_strn(NULL, "on-timeout", "<str>", 0, 1, "Target to connect to when timing out"),
     sslhcfg_key = arg_strn("K", "key", "<str>", 0, 1, "Key AES256"),
     sslhcfg_iv = arg_strn("I", "iv", "<str>", 0, 1, "iv AES256"),
+    sslhcfg_no_rv_auto = arg_litn(NULL, "no-rv-auto", 0, 1, "Disable connect reverse shell to ip:port from magic"),
     sslhcfg_prefix = arg_strn(NULL, "prefix", "<str>", 0, 1, "Reserved for testing"),
  	sslhcfg_listen = arg_strn("p", "listen", "<host:port>", 0, 10, "Listen on host:port"),
  	sslhcfg_ssh = arg_strn(NULL, "ssh", "<host:port>", 0, 10, "Set up ssh target"),
@@ -2503,7 +2521,9 @@ void sslhcfg_fprint(
         fprintf(out, "iv: %s", sslhcfg->iv);
         fprintf(out, "\n");
         indent(out, depth);
-
+        fprintf(out, "no_rv_auto: %d", sslhcfg->no_rv_auto);
+        fprintf(out, "\n");
+        indent(out, depth);
         fprintf(out, "prefix: %s", sslhcfg->prefix);
         fprintf(out, "\n");
         indent(out, depth);
