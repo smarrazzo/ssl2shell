@@ -73,6 +73,7 @@ struct sslhcfg_protocols_item {
 	struct addrinfo*	saddr;
 	void*	data;
 	dl_list	timeouts;
+	
 };
 
 struct sslhcfg_item {
@@ -104,8 +105,6 @@ struct sslhcfg_item {
 	int	logfile_is_present;
 	char*	logfile;
 	char*	on_timeout;
-	int     magic_is_present;
-    char*   magic;
 	char*	key;
 	char*	iv;
 	char*	prefix;

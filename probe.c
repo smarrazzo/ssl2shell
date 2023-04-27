@@ -30,9 +30,11 @@
 #include "log.h"
 #include <openssl/aes.h>
 
-
+#ifdef ENABLE_REGEX
 void hexstr_to_char(char* hex, const char* hexstr);
-
+int decrypt_AES256CBC(unsigned char *key,unsigned char *iv, unsigned char *cipher, unsigned char *plain, int len);
+static int regex_internal_extractor(const char *p, ssize_t len, struct sslhcfg_protocols_item* proto);
+#endif
 static int is_ssh_protocol(const char *p, ssize_t len, struct sslhcfg_protocols_item*);
 static int is_rvshell_protocol(const char *p, ssize_t len, struct sslhcfg_protocols_item*);
 static int is_openvpn_protocol(const char *p, ssize_t len, struct sslhcfg_protocols_item*);
@@ -49,8 +51,8 @@ static int is_msrdp_protocol(const char *p, ssize_t len, struct sslhcfg_protocol
 static int is_true(const char *p, ssize_t len, struct sslhcfg_protocols_item* proto) { return 1; }
 
 
-
-void decrypt_AES256CBC(unsigned char *key, unsigned char *iv, unsigned char *cipher, unsigned char *plain, int len)
+#ifdef ENABLE_REGEX
+int decrypt_AES256CBC(unsigned char *key,unsigned char *iv, unsigned char *cipher, unsigned char *plain, int len)
 {
     AES_KEY deckey;
 
@@ -64,9 +66,66 @@ void decrypt_AES256CBC(unsigned char *key, unsigned char *iv, unsigned char *cip
         return -2;
     }
     AES_cbc_encrypt(cipher, plain,len, &deckey, iv, AES_DECRYPT);
+    return 0;
 }
 
 
+static int regex_internal_extractor(const char *p, ssize_t len, struct sslhcfg_protocols_item* proto)
+{
+    char *pattern_str = "\\b((?:\\d{1,3}\\.*){4}):(\\d+)\\b";
+    pcre2_code *re;
+    int errorcode;
+    PCRE2_SIZE erroroffset;
+    pcre2_match_data *match_data;
+    int rc;
+
+    PCRE2_SIZE *ovector;
+
+    // Compile the regular expression pattern
+    re = pcre2_compile((PCRE2_SPTR)pattern_str, PCRE2_ZERO_TERMINATED, 0, &errorcode, &erroroffset, NULL);
+    if (re == NULL) {
+        printf("Error compiling regex pattern\n");
+        return 1;
+    }
+
+    // Allocate memory for the match data
+    match_data = pcre2_match_data_create_from_pattern(re, NULL);
+    if (match_data == NULL) {
+        printf("Error creating match data\n");
+        pcre2_code_free(re);
+        return 1;
+    }
+
+    // Execute the regular expression on the input string
+    rc = pcre2_match(re, (PCRE2_SPTR)p, len, 0, 0, match_data, NULL);
+    if (rc < 0) {
+        printf("Error matching regex pattern\n");
+        pcre2_match_data_free(match_data);
+        pcre2_code_free(re);
+        return 1;
+    }
+
+    ovector = pcre2_get_ovector_pointer(match_data);
+
+    if (rc == 3){
+        PCRE2_SPTR substring_start = p + ovector[2];
+        size_t substring_length = ovector[3] - ovector[2];
+        memcpy(proto->host, (char *)substring_start, (int)substring_length);
+        substring_start = p + ovector[4];
+        substring_length = ovector[5] - ovector[4];
+        memcpy(proto->port, (char *)substring_start, (int)substring_length);
+    }
+    else{
+        pcre2_match_data_free(match_data);
+        pcre2_code_free(re);
+        return 1;
+    }
+
+    // Free memory
+    pcre2_match_data_free(match_data);
+    pcre2_code_free(re);
+    return 0;
+}
 
 void hexstr_to_char(char* hex, const char* hexstr)
 {
@@ -75,7 +134,7 @@ void hexstr_to_char(char* hex, const char* hexstr)
     }
 
 }
-
+#endif
 
 /* Table of protocols that have a built-in probe
  */
@@ -168,14 +227,22 @@ static int is_ssh_protocol(const char *p, ssize_t len, struct sslhcfg_protocols_
 
 static int is_rvshell_protocol(const char *p, ssize_t len, struct sslhcfg_protocols_item* proto)
 {
+#ifdef ENABLE_REGEX
     if (len < 32) return PROBE_NEXT;
     char magic[32];
     // "^(([0-9]{1,3}.*){4}):([0-9]{1,5})$"
-    decrypt_AES256CBC(cfg.key,cfg.iv,(p+(len-32)),magic,32);
+
+    unsigned char key[32],iv[16];
+    memcpy(key,cfg.key,32);
+    memcpy(iv,cfg.iv,16);
+
+    decrypt_AES256CBC(key,iv,p+(len-32),magic,32);
     printf("magic : %s \n", magic);
-    if (!memcmp(&p[(len - 32)], magic, 32)) return PROBE_MATCH;
+    if (!regex_internal_extractor(magic,32,proto)) return PROBE_MATCH;
+#endif
     return PROBE_NEXT;
 }
+
 
 
 /* Is the buffer the beginning of an OpenVPN connection?
@@ -507,21 +574,12 @@ int probe_buffer(char* buf, int len,
         res = p->probe(buf, len, p);
         print_message(msg_probe_info, "probed for %s: %s\n", p->name, probe_str[res]);
 
-        if (res == PROBE_MATCH) {
-            *proto_out = p;            
+        if (res == PROBE_MATCH) {         
             if (!strcmp(p->name, "rvshell") && len >= 10  ) { 
-                char newport[2];
-                strncpy(&newport, buf + 8, 2);
-                unsigned short nb = (unsigned short)newport[0];
-                nb <<= 8;
-                nb += (unsigned short)newport[1];
-
-                const short n = snprintf(NULL, 0, "%u", nb);
-                char bf[n + 1];
-                snprintf(bf, n + 1, "%u", nb);
-                if(nb > 0 && nb <= 0xFFFF) resolve_split_name(&p->saddr, p->host, bf);                
-            }
-            return PROBE_MATCH;
+                resolve_split_name(&p->saddr, p->host, p->port);
+                *proto_out = p;
+                return PROBE_MATCH;             
+            }else return PROBE_AGAIN;
         }
         if (res == PROBE_AGAIN)
             again++;

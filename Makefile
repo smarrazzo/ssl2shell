@@ -5,11 +5,11 @@ VERSION=$(shell ./genver.sh -r)
 # change any of these
 ENABLE_SANITIZER= # Enable ASAN/LSAN/UBSAN
 ENABLE_REGEX=1  # Enable regex probes
-USELIBCONFIG=	# Use libconfig? (necessary to use configuration files)
-USELIBWRAP=1	# Use libwrap?
+USELIBCONFIG=1	# Use libconfig? (necessary to use configuration files)
+USELIBWRAP?=1	# Use libwrap?
 USELIBCAP=1	# Use libcap?
 USESYSTEMD=     # Make use of systemd socket activation
-USELIBBSD=1     # Use libbsd (needed to update process name in `ps`)
+USELIBBSD?=1     # Use libbsd (needed to update process name in `ps`)
 COV_TEST= 	# Perform test coverage?
 PREFIX?=/usr
 BINDIR?=$(PREFIX)/sbin

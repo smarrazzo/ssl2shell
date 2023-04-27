@@ -443,49 +443,48 @@ struct compound_cl_arg {
 
 
 struct arg_file* sslhcfg_conffile;
- struct arg_int* sslhcfg_verbose_config;
- struct arg_int* sslhcfg_verbose_config_error;
- struct arg_int* sslhcfg_verbose_connections;
- struct arg_int* sslhcfg_verbose_connections_try;
- struct arg_int* sslhcfg_verbose_connections_error;
- struct arg_int* sslhcfg_verbose_fd;
- struct arg_int* sslhcfg_verbose_packets;
- struct arg_int* sslhcfg_verbose_probe_info;
- struct arg_int* sslhcfg_verbose_probe_error;
- struct arg_int* sslhcfg_verbose_system_error;
- struct arg_int* sslhcfg_verbose_int_error;
- struct arg_lit* sslhcfg_version;
- struct arg_lit* sslhcfg_foreground;
- struct arg_lit* sslhcfg_inetd;
- struct arg_lit* sslhcfg_numeric;
- struct arg_lit* sslhcfg_transparent;
- struct arg_int* sslhcfg_timeout;
- struct arg_int* sslhcfg_udp_max_connections;
- struct arg_str* sslhcfg_user;
- struct arg_str* sslhcfg_pidfile;
- struct arg_str* sslhcfg_chroot;
- struct arg_str* sslhcfg_syslog_facility;
- struct arg_str* sslhcfg_logfile;
- struct arg_str* sslhcfg_on_timeout;
- struct arg_str* sslhcfg_magic;
- struct arg_str* sslhcfg_key;
- struct arg_str* sslhcfg_iv;
- struct arg_str* sslhcfg_prefix;
- 	struct arg_str* sslhcfg_listen;
- 	struct arg_str* sslhcfg_ssh;
- 	struct arg_str* sslhcfg_tls;
-    struct arg_str* sslhcfg_rvshell;
- 	struct arg_str* sslhcfg_openvpn;
- 	struct arg_str* sslhcfg_tinc;
- 	struct arg_str* sslhcfg_wireguard;
- 	struct arg_str* sslhcfg_xmpp;
- 	struct arg_str* sslhcfg_http;
- 	struct arg_str* sslhcfg_adb;
- 	struct arg_str* sslhcfg_socks5;
- 	struct arg_str* sslhcfg_syslog;
- 	struct arg_str* sslhcfg_msrdp;
- 	struct arg_str* sslhcfg_anyprot;
- struct arg_end* sslhcfg_end;
+struct arg_int* sslhcfg_verbose_config;
+struct arg_int* sslhcfg_verbose_config_error;
+struct arg_int* sslhcfg_verbose_connections;
+struct arg_int* sslhcfg_verbose_connections_try;
+struct arg_int* sslhcfg_verbose_connections_error;
+struct arg_int* sslhcfg_verbose_fd;
+struct arg_int* sslhcfg_verbose_packets;
+struct arg_int* sslhcfg_verbose_probe_info;
+struct arg_int* sslhcfg_verbose_probe_error;
+struct arg_int* sslhcfg_verbose_system_error;
+struct arg_int* sslhcfg_verbose_int_error;
+struct arg_lit* sslhcfg_version;
+struct arg_lit* sslhcfg_foreground;
+struct arg_lit* sslhcfg_inetd;
+struct arg_lit* sslhcfg_numeric;
+struct arg_lit* sslhcfg_transparent;
+struct arg_int* sslhcfg_timeout;
+struct arg_int* sslhcfg_udp_max_connections;
+struct arg_str* sslhcfg_user;
+struct arg_str* sslhcfg_pidfile;
+struct arg_str* sslhcfg_chroot;
+struct arg_str* sslhcfg_syslog_facility;
+struct arg_str* sslhcfg_logfile;
+struct arg_str* sslhcfg_on_timeout;
+struct arg_str* sslhcfg_key;
+struct arg_str* sslhcfg_iv;
+struct arg_str* sslhcfg_prefix;
+struct arg_str* sslhcfg_listen;
+struct arg_str* sslhcfg_ssh;
+struct arg_str* sslhcfg_tls;
+struct arg_str* sslhcfg_rvshell;
+struct arg_str* sslhcfg_openvpn;
+struct arg_str* sslhcfg_tinc;
+struct arg_str* sslhcfg_wireguard;
+struct arg_str* sslhcfg_xmpp;
+struct arg_str* sslhcfg_http;
+struct arg_str* sslhcfg_adb;
+struct arg_str* sslhcfg_socks5;
+struct arg_str* sslhcfg_syslog;
+struct arg_str* sslhcfg_msrdp;
+struct arg_str* sslhcfg_anyprot;
+struct arg_end* sslhcfg_end;
 
                                                                                                                                                         
 static struct config_desc table_sslhcfg_protocols[] = {
@@ -1205,52 +1204,6 @@ static struct config_desc table_sslhcfg[] = {
             /* default_val*/    .default_val.def_string = "ssh" 
         },
 
-        {
-            /* name */          "magic",
-            /* type */          CFG_STRING,
-            /* sub_group*/      NULL,
-            /* arg_cl */        & sslhcfg_magic,
-            /* base_addr */     NULL,
-            /* offset */        offsetof(struct sslhcfg_item, magic),
-            /* offset_len */    0,
-            /* offset_present */ offsetof(struct sslhcfg_item, magic_is_present),
-            /* size */          sizeof(char*),
-            /* array_type */    -1,
-            /* mandatory */     0,
-            /* optional */      1,
-            /* default_val*/    .default_val.def_string = NULL
-        },
-                {
-            /* name */          "key",
-            /* type */          CFG_STRING,
-            /* sub_group*/      NULL,
-            /* arg_cl */        & sslhcfg_key,
-            /* base_addr */     NULL,
-            /* offset */        offsetof(struct sslhcfg_item, key),
-            /* offset_len */    0,
-            /* offset_present */0,
-            /* size */          sizeof(char*),
-            /* array_type */    -1,
-            /* mandatory */     0,
-            /* optional */      1,
-            /* default_val*/    .default_val.def_string = NULL
-        },
-                {
-            /* name */          "iv",
-            /* type */          CFG_STRING,
-            /* sub_group*/      NULL,
-            /* arg_cl */        & sslhcfg_iv,
-            /* base_addr */     NULL,
-            /* offset */        offsetof(struct sslhcfg_item, iv),
-            /* offset_len */    0,
-            /* offset_present */0,
-            /* size */          sizeof(char*),
-            /* array_type */    -1,
-            /* mandatory */     0,
-            /* optional */      1,
-            /* default_val*/    .default_val.def_string = NULL
-        },
-
         { 
             /* name */          "prefix", 
             /* type */          CFG_STRING, 
@@ -1265,6 +1218,38 @@ static struct config_desc table_sslhcfg[] = {
             /* mandatory */     0, 
             /* optional */      0, 
             /* default_val*/    .default_val.def_string = "" 
+        },
+
+        {
+            /* name */          "key",
+            /* type */          CFG_STRING,
+            /* sub_group*/      NULL,
+            /* arg_cl */        & sslhcfg_key,
+            /* base_addr */     NULL,
+            /* offset */        offsetof(struct sslhcfg_item, key),
+            /* offset_len */    0,
+            /* offset_present */0,
+            /* size */          sizeof(char*),
+            /* array_type */    -1,
+            /* mandatory */     0,
+            /* optional */      1,
+            /* default_val*/    .default_val.def_string = NULL
+        },
+
+        {
+            /* name */          "iv",
+            /* type */          CFG_STRING,
+            /* sub_group*/      NULL,
+            /* arg_cl */        & sslhcfg_iv,
+            /* base_addr */     NULL,
+            /* offset */        offsetof(struct sslhcfg_item, iv),
+            /* offset_len */    0,
+            /* offset_present */0,
+            /* size */          sizeof(char*),
+            /* array_type */    -1,
+            /* mandatory */     0,
+            /* optional */      1,
+            /* default_val*/    .default_val.def_string = NULL
         },
 
         { 
@@ -1421,7 +1406,7 @@ static struct compound_cl_arg compound_cl_args[] = {
         {   /* arg: listen */
             .regex =           "(.+):(\\w+)",
             .arg_cl =          & sslhcfg_listen,
-            .base_entry =      & table_sslhcfg [25],
+            .base_entry =      & table_sslhcfg [27],
             .targets =         sslhcfg_listen_targets,
 
 
@@ -1433,7 +1418,7 @@ static struct compound_cl_arg compound_cl_args[] = {
         {   /* arg: ssh */
             .regex =           "(.+):(\\w+)",
             .arg_cl =          & sslhcfg_ssh,
-            .base_entry =      & table_sslhcfg [26],
+            .base_entry =      & table_sslhcfg [28],
             .targets =         sslhcfg_ssh_targets,
 
 
@@ -1445,7 +1430,7 @@ static struct compound_cl_arg compound_cl_args[] = {
         {   /* arg: rvshell */
             .regex =           "(.+):(\\w+)",
             .arg_cl =          & sslhcfg_rvshell,
-            .base_entry =      & table_sslhcfg [25],
+            .base_entry =      & table_sslhcfg [28],
             .targets =         sslhcfg_rvshell_targets,
 
 
@@ -1457,7 +1442,7 @@ static struct compound_cl_arg compound_cl_args[] = {
         {   /* arg: tls */
             .regex =           "(.+):(\\w+)",
             .arg_cl =          & sslhcfg_tls,
-            .base_entry =      & table_sslhcfg [26],
+            .base_entry =      & table_sslhcfg [28],
             .targets =         sslhcfg_tls_targets,
 
 
@@ -1469,7 +1454,7 @@ static struct compound_cl_arg compound_cl_args[] = {
         {   /* arg: openvpn */
             .regex =           "(.+):(\\w+)",
             .arg_cl =          & sslhcfg_openvpn,
-            .base_entry =      & table_sslhcfg [26],
+            .base_entry =      & table_sslhcfg [28],
             .targets =         sslhcfg_openvpn_targets,
 
 
@@ -1481,7 +1466,7 @@ static struct compound_cl_arg compound_cl_args[] = {
         {   /* arg: tinc */
             .regex =           "(.+):(\\w+)",
             .arg_cl =          & sslhcfg_tinc,
-            .base_entry =      & table_sslhcfg [26],
+            .base_entry =      & table_sslhcfg [28],
             .targets =         sslhcfg_tinc_targets,
 
 
@@ -1493,7 +1478,7 @@ static struct compound_cl_arg compound_cl_args[] = {
         {   /* arg: wireguard */
             .regex =           "(.+):(\\w+)",
             .arg_cl =          & sslhcfg_wireguard,
-            .base_entry =      & table_sslhcfg [26],
+            .base_entry =      & table_sslhcfg [28],
             .targets =         sslhcfg_wireguard_targets,
 
 
@@ -1505,7 +1490,7 @@ static struct compound_cl_arg compound_cl_args[] = {
         {   /* arg: xmpp */
             .regex =           "(.+):(\\w+)",
             .arg_cl =          & sslhcfg_xmpp,
-            .base_entry =      & table_sslhcfg [26],
+            .base_entry =      & table_sslhcfg [28],
             .targets =         sslhcfg_xmpp_targets,
 
 
@@ -1517,7 +1502,7 @@ static struct compound_cl_arg compound_cl_args[] = {
         {   /* arg: http */
             .regex =           "(.+):(\\w+)",
             .arg_cl =          & sslhcfg_http,
-            .base_entry =      & table_sslhcfg [26],
+            .base_entry =      & table_sslhcfg [28],
             .targets =         sslhcfg_http_targets,
 
 
@@ -1529,7 +1514,7 @@ static struct compound_cl_arg compound_cl_args[] = {
         {   /* arg: adb */
             .regex =           "(.+):(\\w+)",
             .arg_cl =          & sslhcfg_adb,
-            .base_entry =      & table_sslhcfg [26],
+            .base_entry =      & table_sslhcfg [28],
             .targets =         sslhcfg_adb_targets,
 
 
@@ -1541,7 +1526,7 @@ static struct compound_cl_arg compound_cl_args[] = {
         {   /* arg: socks5 */
             .regex =           "(.+):(\\w+)",
             .arg_cl =          & sslhcfg_socks5,
-            .base_entry =      & table_sslhcfg [26],
+            .base_entry =      & table_sslhcfg [28],
             .targets =         sslhcfg_socks5_targets,
 
 
@@ -1553,7 +1538,7 @@ static struct compound_cl_arg compound_cl_args[] = {
         {   /* arg: syslog */
             .regex =           "(.+):(\\w+)",
             .arg_cl =          & sslhcfg_syslog,
-            .base_entry =      & table_sslhcfg [26],
+            .base_entry =      & table_sslhcfg [28],
             .targets =         sslhcfg_syslog_targets,
 
 
@@ -1565,7 +1550,7 @@ static struct compound_cl_arg compound_cl_args[] = {
         {   /* arg: msrdp */
             .regex =           "(.+):(\\w+)",
             .arg_cl =          & sslhcfg_msrdp,
-            .base_entry =      & table_sslhcfg [26],
+            .base_entry =      & table_sslhcfg [28],
             .targets =         sslhcfg_msrdp_targets,
 
 
@@ -1577,7 +1562,7 @@ static struct compound_cl_arg compound_cl_args[] = {
         {   /* arg: anyprot */
             .regex =           "(.+):(\\w+)",
             .arg_cl =          & sslhcfg_anyprot,
-            .base_entry =      & table_sslhcfg [26],
+            .base_entry =      & table_sslhcfg [28],
             .targets =         sslhcfg_anyprot_targets,
 
 
@@ -2239,37 +2224,36 @@ int sslhcfg_cl_parse(int argc, char* argv[], struct sslhcfg_item* cfg)
     char* errmsg;
     config_setting_t* s;
     void* argtable[] = {
-            #ifdef LIBCONFIG
-        sslhcfg_conffile = arg_filen("F", "config", "<file>", 0, 1, "Specify configuration file"),
-    #endif
-         sslhcfg_verbose_config = arg_intn(NULL, "verbose-config", "<n>", 0, 1, "Print configuration at startup"),
-         sslhcfg_verbose_config_error = arg_intn(NULL, "verbose-config-error", "<n>", 0, 1, "Print configuration errors"),
-         sslhcfg_verbose_connections = arg_intn(NULL, "verbose-connections", "<n>", 0, 1, "Trace established incoming address to forward address"),
-         sslhcfg_verbose_connections_try = arg_intn(NULL, "verbose-connections-try", "<n>", 0, 1, "Connection errors"),
-         sslhcfg_verbose_connections_error = arg_intn(NULL, "verbose-connections-error", "<n>", 0, 1, "Connection attempts towards targets"),
-         sslhcfg_verbose_fd = arg_intn(NULL, "verbose-fd", "<n>", 0, 1, "File descriptor activity, open/close/whatnot"),
-         sslhcfg_verbose_packets = arg_intn(NULL, "verbose-packets", "<n>", 0, 1, "Hexdump packets on which probing is done"),
-         sslhcfg_verbose_probe_info = arg_intn(NULL, "verbose-probe-info", "<n>", 0, 1, "Trace the probe process"),
-         sslhcfg_verbose_probe_error = arg_intn(NULL, "verbose-probe-error", "<n>", 0, 1, "Failures and problems during probing"),
-         sslhcfg_verbose_system_error = arg_intn(NULL, "verbose-system-error", "<n>", 0, 1, "System call failures"),
-         sslhcfg_verbose_int_error = arg_intn(NULL, "verbose-int-error", "<n>", 0, 1, "Internal errors that should never happen"),
-         sslhcfg_version = arg_litn("V", "version", 0, 1, "Print version information and exit"),
-         sslhcfg_foreground = arg_litn("f", "foreground", 0, 1, "Run in foreground instead of as a daemon"),
-         sslhcfg_inetd = arg_litn("i", "inetd", 0, 1, "Run in inetd mode: use stdin/stdout instead of network listen"),
-         sslhcfg_numeric = arg_litn("n", "numeric", 0, 1, "Print IP addresses and ports as numbers"),
-         sslhcfg_transparent = arg_litn(NULL, "transparent", 0, 1, "Set up as a transparent proxy"),
-         sslhcfg_timeout = arg_intn("t", "timeout", "<n>", 0, 1, "Set up timeout before connecting to default target"),
-         sslhcfg_udp_max_connections = arg_intn(NULL, "udp-max-connections", "<n>", 0, 1, "Number of concurrent UDP connections"),
-         sslhcfg_user = arg_strn("u", "user", "<str>", 0, 1, "Username to change to after set-up"),
-         sslhcfg_pidfile = arg_strn("P", "pidfile", "<file>", 0, 1, "Path to file to store PID of current instance"),
-         sslhcfg_chroot = arg_strn("C", "chroot", "<path>", 0, 1, "Root to change to after set-up"),
-         sslhcfg_syslog_facility = arg_strn(NULL, "syslog-facility", "<str>", 0, 1, "Facility to syslog to"),
-         sslhcfg_logfile = arg_strn(NULL, "logfile", "<str>", 0, 1, "Log messages to a file"),
-         sslhcfg_on_timeout = arg_strn(NULL, "on-timeout", "<str>", 0, 1, "Target to connect to when timing out"),
-         sslhcfg_magic = arg_strn("M", "magic", "<magic word>", 0, 1, "Say the magic word !"),
-         sslhcfg_key = arg_strn("K", "key", "<AES key>", 0, 1, "Key AES256"),
-         sslhcfg_iv = arg_strn("iv", "iv", "<AES iv>", 0, 1, "iv AES256"),
-         sslhcfg_prefix = arg_strn(NULL, "prefix", "<str>", 0, 1, "Reserved for testing"),
+#ifdef LIBCONFIG
+    sslhcfg_conffile = arg_filen("F", "config", "<file>", 0, 1, "Specify configuration file"),
+#endif
+    sslhcfg_verbose_config = arg_intn(NULL, "verbose-config", "<n>", 0, 1, "Print configuration at startup"),
+    sslhcfg_verbose_config_error = arg_intn(NULL, "verbose-config-error", "<n>", 0, 1, "Print configuration errors"),
+    sslhcfg_verbose_connections = arg_intn(NULL, "verbose-connections", "<n>", 0, 1, "Trace established incoming address to forward address"),
+    sslhcfg_verbose_connections_try = arg_intn(NULL, "verbose-connections-try", "<n>", 0, 1, "Connection errors"),
+    sslhcfg_verbose_connections_error = arg_intn(NULL, "verbose-connections-error", "<n>", 0, 1, "Connection attempts towards targets"),
+    sslhcfg_verbose_fd = arg_intn(NULL, "verbose-fd", "<n>", 0, 1, "File descriptor activity, open/close/whatnot"),
+    sslhcfg_verbose_packets = arg_intn(NULL, "verbose-packets", "<n>", 0, 1, "Hexdump packets on which probing is done"),
+    sslhcfg_verbose_probe_info = arg_intn(NULL, "verbose-probe-info", "<n>", 0, 1, "Trace the probe process"),
+    sslhcfg_verbose_probe_error = arg_intn(NULL, "verbose-probe-error", "<n>", 0, 1, "Failures and problems during probing"),
+    sslhcfg_verbose_system_error = arg_intn(NULL, "verbose-system-error", "<n>", 0, 1, "System call failures"),
+    sslhcfg_verbose_int_error = arg_intn(NULL, "verbose-int-error", "<n>", 0, 1, "Internal errors that should never happen"),
+    sslhcfg_version = arg_litn("V", "version", 0, 1, "Print version information and exit"),
+    sslhcfg_foreground = arg_litn("f", "foreground", 0, 1, "Run in foreground instead of as a daemon"),
+    sslhcfg_inetd = arg_litn("i", "inetd", 0, 1, "Run in inetd mode: use stdin/stdout instead of network listen"),
+    sslhcfg_numeric = arg_litn("n", "numeric", 0, 1, "Print IP addresses and ports as numbers"),
+    sslhcfg_transparent = arg_litn(NULL, "transparent", 0, 1, "Set up as a transparent proxy"),
+    sslhcfg_timeout = arg_intn("t", "timeout", "<n>", 0, 1, "Set up timeout before connecting to default target"),
+    sslhcfg_udp_max_connections = arg_intn(NULL, "udp-max-connections", "<n>", 0, 1, "Number of concurrent UDP connections"),
+    sslhcfg_user = arg_strn("u", "user", "<str>", 0, 1, "Username to change to after set-up"),
+    sslhcfg_pidfile = arg_strn("P", "pidfile", "<file>", 0, 1, "Path to file to store PID of current instance"),
+    sslhcfg_chroot = arg_strn("C", "chroot", "<path>", 0, 1, "Root to change to after set-up"),
+    sslhcfg_syslog_facility = arg_strn(NULL, "syslog-facility", "<str>", 0, 1, "Facility to syslog to"),
+    sslhcfg_logfile = arg_strn(NULL, "logfile", "<str>", 0, 1, "Log messages to a file"),
+    sslhcfg_on_timeout = arg_strn(NULL, "on-timeout", "<str>", 0, 1, "Target to connect to when timing out"),
+    sslhcfg_key = arg_strn("K", "key", "<str>", 0, 1, "Key AES256"),
+    sslhcfg_iv = arg_strn("I", "iv", "<str>", 0, 1, "iv AES256"),
+    sslhcfg_prefix = arg_strn(NULL, "prefix", "<str>", 0, 1, "Reserved for testing"),
  	sslhcfg_listen = arg_strn("p", "listen", "<host:port>", 0, 10, "Listen on host:port"),
  	sslhcfg_ssh = arg_strn(NULL, "ssh", "<host:port>", 0, 10, "Set up ssh target"),
     sslhcfg_rvshell = arg_strn(NULL, "rvshell", "<host:port>", 0, 10, "Set up Reverse shell target"),
@@ -2512,17 +2496,14 @@ void sslhcfg_fprint(
         fprintf(out, "on_timeout: %s", sslhcfg->on_timeout);
         fprintf(out, "\n");
         indent(out, depth);
-        fprintf(out, "magic: %s", sslhcfg->magic);
-        if (! sslhcfg->magic_is_present)
-            fprintf(out, " <unset>");
-        fprintf(out, "\n");
-        indent(out, depth);
+
         fprintf(out, "key: %s", sslhcfg->key);
         fprintf(out, "\n");
         indent(out, depth);
         fprintf(out, "iv: %s", sslhcfg->iv);
         fprintf(out, "\n");
         indent(out, depth);
+
         fprintf(out, "prefix: %s", sslhcfg->prefix);
         fprintf(out, "\n");
         indent(out, depth);
