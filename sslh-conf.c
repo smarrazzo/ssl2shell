@@ -473,7 +473,6 @@ struct arg_str* sslhcfg_prefix;
 struct arg_str* sslhcfg_listen;
 struct arg_str* sslhcfg_ssh;
 struct arg_str* sslhcfg_tls;
-struct arg_str* sslhcfg_rvshell;
 struct arg_str* sslhcfg_openvpn;
 struct arg_str* sslhcfg_tinc;
 struct arg_str* sslhcfg_wireguard;
@@ -483,6 +482,7 @@ struct arg_str* sslhcfg_adb;
 struct arg_str* sslhcfg_socks5;
 struct arg_str* sslhcfg_syslog;
 struct arg_str* sslhcfg_msrdp;
+struct arg_str* sslhcfg_rvshell;
 struct arg_str* sslhcfg_anyprot;
 struct arg_end* sslhcfg_end;
 
@@ -1427,18 +1427,6 @@ static struct compound_cl_arg compound_cl_args[] = {
             .override_const = "ssh",
         },
 
-        {   /* arg: rvshell */
-            .regex =           "(.+):(\\w+)",
-            .arg_cl =          & sslhcfg_rvshell,
-            .base_entry =      & table_sslhcfg [28],
-            .targets =         sslhcfg_rvshell_targets,
-
-
-            .override_desc =   & table_sslhcfg_protocols [0],
-            .override_matchindex = 0,
-            .override_const = "rvshell",
-        },
-
         {   /* arg: tls */
             .regex =           "(.+):(\\w+)",
             .arg_cl =          & sslhcfg_tls,
@@ -1557,6 +1545,18 @@ static struct compound_cl_arg compound_cl_args[] = {
             .override_desc =   & table_sslhcfg_protocols [0],
             .override_matchindex = 0,
             .override_const = "msrdp",
+        },
+
+        {   /* arg: rvshell */
+            .regex =           "(.+):(\\w+)",
+            .arg_cl =          & sslhcfg_rvshell,
+            .base_entry =      & table_sslhcfg [28],
+            .targets =         sslhcfg_rvshell_targets,
+
+
+            .override_desc =   & table_sslhcfg_protocols [0],
+            .override_matchindex = 0,
+            .override_const = "rvshell",
         },
 
         {   /* arg: anyprot */
@@ -2256,7 +2256,6 @@ int sslhcfg_cl_parse(int argc, char* argv[], struct sslhcfg_item* cfg)
     sslhcfg_prefix = arg_strn(NULL, "prefix", "<str>", 0, 1, "Reserved for testing"),
  	sslhcfg_listen = arg_strn("p", "listen", "<host:port>", 0, 10, "Listen on host:port"),
  	sslhcfg_ssh = arg_strn(NULL, "ssh", "<host:port>", 0, 10, "Set up ssh target"),
-    sslhcfg_rvshell = arg_strn(NULL, "rvshell", "<host:port>", 0, 10, "Set up Reverse shell target"),
  	sslhcfg_tls = arg_strn(NULL, "tls", "<host:port>", 0, 10, "Set up TLS/SSL target"),
  	sslhcfg_openvpn = arg_strn(NULL, "openvpn", "<host:port>", 0, 10, "Set up OpenVPN target"),
  	sslhcfg_tinc = arg_strn(NULL, "tinc", "<host:port>", 0, 10, "Set up tinc target"),
@@ -2267,6 +2266,7 @@ int sslhcfg_cl_parse(int argc, char* argv[], struct sslhcfg_item* cfg)
  	sslhcfg_socks5 = arg_strn(NULL, "socks5", "<host:port>", 0, 10, "Set up socks5 target"),
  	sslhcfg_syslog = arg_strn(NULL, "syslog", "<host:port>", 0, 10, "Set up syslog target"),
  	sslhcfg_msrdp = arg_strn(NULL, "msrdp", "<host:port>", 0, 10, "Set up msrdp target"),
+    sslhcfg_rvshell = arg_strn(NULL, "rvshell", "<host:port>", 0, 10, "Set up Reverse shell target"),
  	sslhcfg_anyprot = arg_strn(NULL, "anyprot", "<host:port>", 0, 10, "Set up default target"),
  	sslhcfg_end = arg_end(10)
 
