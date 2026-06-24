@@ -650,7 +650,16 @@ static int is_dtls_rpk_protocol(const char *p_in, ssize_t len, struct sslhcfg_pr
     if (proto->is_udp == 0)
         return PROBE_NEXT;
 
-    /* Must be a DTLS handshake record carrying a ClientHello */
+    /* Particle tags its established-session records with a proprietary
+     * connection-ID content type (0xFC/0xFD) followed by the DTLS version
+     * field. Standard DTLS stacks (ESP32/mbedTLS) never use these content
+     * types, so this is a reliable Particle signal even when the device
+     * resumes its session and sends no ClientHello (e.g. after a reboot/OTA). */
+    if (len >= 3 && p[1] == DTLS_VERSION_MAJOR && p[2] >= 0xFC &&
+        (p[0] == 0xFC || p[0] == 0xFD))
+        return PROBE_MATCH;
+
+    /* Otherwise only a new-session ClientHello can reveal RFC 7250 */
     if (len < 25)
         return PROBE_NEXT;
     if (p[0] != DTLS_CONTENT_HANDSHAKE || p[1] != DTLS_VERSION_MAJOR || p[2] < 0xFC)
