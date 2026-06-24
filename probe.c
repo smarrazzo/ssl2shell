@@ -47,6 +47,7 @@ static int is_syslog_protocol(const char *p, ssize_t len, struct sslhcfg_protoco
 static int is_teamspeak_protocol(const char *p, ssize_t len, struct sslhcfg_protocols_item*);
 static int is_msrdp_protocol(const char *p, ssize_t len, struct sslhcfg_protocols_item*);
 static int is_dtls_protocol(const char *p, ssize_t len, struct sslhcfg_protocols_item*);
+static int is_dtls_rpk_protocol(const char *p, ssize_t len, struct sslhcfg_protocols_item*);
 static int is_true(const char *p, ssize_t len, struct sslhcfg_protocols_item* proto) { return 1; }
 
 
@@ -167,6 +168,7 @@ static struct protocol_probe_desc builtins[] = {
     { "syslog",     is_syslog_protocol },
     { "teamspeak",  is_teamspeak_protocol },
     { "msrdp",      is_msrdp_protocol },
+    { "dtls_rpk",   is_dtls_rpk_protocol },
     { "dtls",       is_dtls_protocol },
     { "rvshell",    is_rvshell_protocol },
     { "anyprot",    is_true }
@@ -616,6 +618,92 @@ static int is_dtls_protocol(const char *p_in, ssize_t len, struct sslhcfg_protoc
     default:
         return PROBE_NEXT;
     }
+}
+
+/* DTLS extension types negotiating the certificate format (RFC 7250) */
+#define DTLS_EXT_CLIENT_CERTIFICATE_TYPE  19
+#define DTLS_EXT_SERVER_CERTIFICATE_TYPE  20
+#define DTLS_CERT_TYPE_RAW_PUBLIC_KEY      2
+
+/* Is the buffer the beginning of a *raw-public-key* DTLS connection (RFC 7250)?
+ *
+ * Refinement of is_dtls_protocol() used to tell apart, on a single shared UDP
+ * port, the two kinds of devices the cloud-server speaks to:
+ *   - Particle/Photon: DTLS 1.2 with raw public keys (RFC 7250)  -> matches here
+ *   - ESP32:           DTLS 1.2 with X.509 certificates          -> falls through
+ *
+ * Both are identical at the record layer, so we parse the ClientHello and look
+ * for the client_certificate_type / server_certificate_type extensions
+ * advertising RawPublicKey (value 2). Only a new-session ClientHello carries
+ * these; anything else falls through to the generic "dtls" probe.
+ *
+ * Place "dtls_rpk" before "dtls" in the configuration so Particle is matched
+ * first and everything else (ESP32 X.509) is caught by "dtls".
+ *
+ * Every offset is bounds-checked: the input is attacker-controlled UDP.
+ */
+static int is_dtls_rpk_protocol(const char *p_in, ssize_t len, struct sslhcfg_protocols_item* proto)
+{
+    const unsigned char* p = (const unsigned char*)p_in;
+    size_t o, ext_end;
+
+    if (proto->is_udp == 0)
+        return PROBE_NEXT;
+
+    /* Must be a DTLS handshake record carrying a ClientHello */
+    if (len < 25)
+        return PROBE_NEXT;
+    if (p[0] != DTLS_CONTENT_HANDSHAKE || p[1] != DTLS_VERSION_MAJOR || p[2] < 0xFC)
+        return PROBE_NEXT;
+    if (p[13] != DTLS_HANDSHAKE_CLIENT_HELLO)
+        return PROBE_NEXT;
+
+    /* ClientHello body: after the 13-byte record + 12-byte handshake headers */
+    o  = 25;
+    o += 2;   /* client_version */
+    o += 32;  /* random         */
+
+    /* session_id <0..32> : 1-byte length prefix */
+    if (o + 1 > (size_t)len) return PROBE_NEXT;
+    o += 1 + p[o];
+    /* cookie <0..255> (DTLS-specific) : 1-byte length prefix */
+    if (o + 1 > (size_t)len) return PROBE_NEXT;
+    o += 1 + p[o];
+    /* cipher_suites <2..> : 2-byte length prefix */
+    if (o + 2 > (size_t)len) return PROBE_NEXT;
+    o += 2 + ((p[o] << 8) | p[o+1]);
+    /* compression_methods <1..> : 1-byte length prefix */
+    if (o + 1 > (size_t)len) return PROBE_NEXT;
+    o += 1 + p[o];
+    /* extensions block : 2-byte length prefix */
+    if (o + 2 > (size_t)len) return PROBE_NEXT;
+    ext_end = o + 2 + ((p[o] << 8) | p[o+1]);
+    o += 2;
+    if (ext_end > (size_t)len) ext_end = (size_t)len;
+
+    /* Scan extensions for a certificate_type advertising RawPublicKey */
+    while (o + 4 <= ext_end) {
+        unsigned ext_type = (p[o] << 8) | p[o+1];
+        unsigned ext_len  = (p[o+2] << 8) | p[o+3];
+        size_t   data     = o + 4;
+
+        if (data + ext_len > ext_end)
+            break;
+        if (ext_type == DTLS_EXT_CLIENT_CERTIFICATE_TYPE ||
+            ext_type == DTLS_EXT_SERVER_CERTIFICATE_TYPE) {
+            /* data: 1-byte list length, then that many 1-byte cert types */
+            if (ext_len >= 1) {
+                unsigned list_len = p[data];
+                size_t i;
+                for (i = 0; i < list_len && data + 1 + i < ext_end; i++)
+                    if (p[data + 1 + i] == DTLS_CERT_TYPE_RAW_PUBLIC_KEY)
+                        return PROBE_MATCH;
+            }
+        }
+        o = data + ext_len;
+    }
+
+    return PROBE_NEXT;
 }
 
 #ifdef ENABLE_REGEX
