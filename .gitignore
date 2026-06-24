@@ -3,8 +3,15 @@
 *.o
 cscope.*
 echosrv
+libsslh.a
 sslh-fork
 sslh-select
+sslh-ev
+systemd-sslh-generator
 sslh.8.gz
 tags
 version.h
+/config.status
+/config.log
+/config.h
+/Makefile

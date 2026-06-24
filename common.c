@@ -12,16 +12,17 @@
 #include <sys/types.h>
 #include <ifaddrs.h>
 #include <netinet/in.h>
+#include <sys/un.h>
 
 #include "common.h"
 #include "probe.h"
 #include "log.h"
 #include "sslh-conf.h"
+#include "proxyprotocol.h"
 
-/* Added to make the code compilable under CYGWIN
- * */
-#ifndef SA_NOCLDWAIT
-#define SA_NOCLDWAIT 0
+#if HAVE_LIBCAP
+#include <sys/capability.h>
+#include <sys/prctl.h>
 #endif
 
 /* Make use of systemd socket activation
@@ -30,7 +31,7 @@
 #include <systemd/sd-daemon.h>
 #endif
 
-#ifdef LIBBSD
+#ifdef HAVE_LIBBSD
 #include <bsd/unistd.h>
 #endif
 
@@ -42,7 +43,7 @@ struct sslhcfg_item cfg;
 struct addrinfo *addr_listen = NULL; /* what addresses do we listen to? */
 
 
-#ifdef LIBWRAP
+#ifdef HAVE_LIBWRAP
 #include <tcpd.h>
 int allow_severity =0, deny_severity = 0;
 #endif
@@ -80,7 +81,7 @@ int get_fd_sockets(struct listen_endpoint *sockfd[])
     }
     if (sd > 0) {
       int i;
-      *sockfd = malloc(sd * sizeof(*sockfd[0]));
+      *sockfd = calloc(sd, sizeof(*sockfd[0]));
       CHECK_ALLOC(*sockfd, "malloc");
       for (i = 0; i < sd; i++) {
         (*sockfd)[i].socketfd = SD_LISTEN_FDS_START + i;
@@ -110,7 +111,7 @@ int make_listen_tfo(int s)
     return setsockopt(s, SOL_SOCKET, TCP_FASTOPEN, (char*)&qlen, sizeof(qlen));
 }
 
-/* Starts listening on a single address 
+/* Starts listening on a single address
  * Returns a socket filehandle, or dies with message in case of major error */
 int listen_single_addr(struct addrinfo* addr, int keepalive, int udp)
 {
@@ -155,17 +156,91 @@ int listen_single_addr(struct addrinfo* addr, int keepalive, int udp)
     return sockfd;
 }
 
+void print_inet_listen_info(int fd, const char* addr, 
+                            struct sslhcfg_listen_item* cfg)
+{
+    print_message(msg_config, "%d:\t%s\t[%s] [%s] [max_cnx: %d]\n", 
+                  fd, 
+                  addr,
+                  cfg->keepalive ? "keepalive" : "",
+                  cfg->is_udp ? "udp" : "",
+                  cfg->max_connections);
+}
+
+
+/* Start listening internet sockets for configuration entry 'index' 
+ * OUT: *sockfd[]: pointer to array of listen_endpoint object; we append new
+ * endpoints to that array
+ * IN: num_addr: how many entries are in sockfd[]
+ *     *cfg: configuration data for the endpoint we are adding
+ * Return: new value of num_addr
+ * */
+static int start_listen_inet(struct listen_endpoint *sockfd[], int num_addr, struct sslhcfg_listen_item* cfg)
+{
+    struct addrinfo *addr, *start_addr;
+    char buf[NI_MAXHOST];
+    int res;
+
+    res = resolve_split_name(&start_addr, cfg->host, cfg->port);
+    if (res) exit(4);
+
+    for (addr = start_addr; addr; addr = addr->ai_next) {
+        num_addr++;
+        *sockfd = realloc(*sockfd, num_addr * sizeof(*sockfd[0]));
+        memset(&(*sockfd)[num_addr-1], 0, sizeof((*sockfd)[num_addr-1]));
+        (*sockfd)[num_addr-1].socketfd = listen_single_addr(addr, cfg->keepalive, cfg->is_udp);
+        (*sockfd)[num_addr-1].type = cfg->is_udp ? SOCK_DGRAM : SOCK_STREAM;
+        (*sockfd)[num_addr-1].family = AF_INET;
+        (*sockfd)[num_addr-1].endpoint_cfg = cfg;
+        print_inet_listen_info((*sockfd)[num_addr-1].socketfd, 
+                               sprintaddr(buf, sizeof(buf), addr), 
+                               cfg);
+    }
+    freeaddrinfo(start_addr);
+    return num_addr;
+}
+
+/* Same, but for UNIX sockets */
+static int start_listen_unix(struct listen_endpoint *sockfd[], int num_addr, struct sslhcfg_listen_item* cfg)
+{
+    int fd = socket(AF_UNIX, cfg->is_udp ? SOCK_DGRAM : SOCK_STREAM, 0);
+    CHECK_RES_DIE(fd, "socket(AF_UNIX)");
+
+    int res = unlink(cfg->host);
+    if ((res == -1) && (errno != ENOENT)) {
+        print_message(msg_config_error, "unlink unix socket `%s':%d:%s\n", cfg->host, errno, strerror(errno));
+        exit(4);
+    }
+
+    struct sockaddr_un sun;
+    sun.sun_family = AF_UNIX;
+    strncpy(sun.sun_path, cfg->host, sizeof(sun.sun_path)-1);
+    printf("binding [%s]\n", sun.sun_path);
+    res = bind(fd, (struct sockaddr*)&sun, sizeof(sun));
+    CHECK_RES_DIE(res, "bind(AF_UNIX)");
+
+    res = listen(fd, 50);
+
+    num_addr++;
+    *sockfd = realloc(*sockfd, num_addr * sizeof(*sockfd[0]));
+    memset(&(*sockfd)[num_addr-1], 0, sizeof((*sockfd)[num_addr-1]));
+    (*sockfd)[num_addr-1].socketfd = fd;
+    (*sockfd)[num_addr-1].type = cfg->is_udp ? SOCK_DGRAM : SOCK_STREAM;
+    (*sockfd)[num_addr-1].family = AF_INET;
+    (*sockfd)[num_addr-1].endpoint_cfg = cfg;
+
+    return num_addr;
+}
+
+
 /* Starts listening sockets on specified addresses.
  * OUT: *sockfd[]  pointer to newly-allocated array of listen_endpoint objects
  * Returns number of addresses bound
    */
 int start_listen_sockets(struct listen_endpoint *sockfd[])
 {
-    struct addrinfo *addr, *start_addr;
-    char buf[NI_MAXHOST];
-    int i, res;
-    int num_addr = 0, keepalive = 0, udp = 0;
-    int sd_socks = 0;
+    int i;
+    int num_addr = 0, sd_socks = 0;
 
     sd_socks = get_fd_sockets(sockfd);
 
@@ -178,22 +253,11 @@ int start_listen_sockets(struct listen_endpoint *sockfd[])
     print_message(msg_config, "Listening to:\n");
 
     for (i = 0; i < cfg.listen_len; i++) {
-        keepalive = cfg.listen[i].keepalive;
-        udp = cfg.listen[i].is_udp;
-
-        res = resolve_split_name(&start_addr, cfg.listen[i].host, cfg.listen[i].port);
-        if (res) exit(4);
-
-        for (addr = start_addr; addr; addr = addr->ai_next) {
-            num_addr++;
-            *sockfd = realloc(*sockfd, num_addr * sizeof(*sockfd[0]));
-            (*sockfd)[num_addr-1].socketfd = listen_single_addr(addr, keepalive, udp);
-            (*sockfd)[num_addr-1].type = udp ? SOCK_DGRAM : SOCK_STREAM;
-            print_message(msg_config, "%d:\t%s\t[%s] [%s]\n", (*sockfd)[num_addr-1].socketfd, sprintaddr(buf, sizeof(buf), addr),
-                          cfg.listen[i].keepalive ? "keepalive" : "",
-                          cfg.listen[i].is_udp ? "udp" : "");
+        if (cfg.listen[i].is_unix) {
+            num_addr = start_listen_unix(sockfd, num_addr, &cfg.listen[i]);
+        } else {
+            num_addr = start_listen_inet(sockfd, num_addr, &cfg.listen[i]);
         }
-        freeaddrinfo(start_addr);
     }
 
     return num_addr;
@@ -243,12 +307,17 @@ int is_same_machine(struct addrinfo* from)
 
 /* Transparent proxying: bind the peer address of fd to the peer address of
  * fd_from */
-#define IP_TRANSPARENT 19
+#ifndef IP_TRANSPARENT
+  #define IP_TRANSPARENT 19
+#endif
+#ifndef IP_BIND_ADDRESS_NO_PORT
+  #define IP_BIND_ADDRESS_NO_PORT 24
+#endif
 int bind_peer(int fd, int fd_from)
 {
     struct addrinfo from;
     struct sockaddr_storage ss;
-    int res, trans = 1;
+    int res, enable = 1, disable = 0;
 
     memset(&from, 0, sizeof(from));
     from.ai_addr = (struct sockaddr*)&ss;
@@ -262,23 +331,55 @@ int bind_peer(int fd, int fd_from)
     /* if the destination is the same machine, there's no need to do bind */
     if (is_same_machine(&from))
         return 0;
-    
+
 #ifndef IP_BINDANY /* use IP_TRANSPARENT */
-    res = setsockopt(fd, IPPROTO_IP, IP_TRANSPARENT, &trans, sizeof(trans));
+    res = setsockopt(fd, IPPROTO_IP, IP_TRANSPARENT, &enable, sizeof(enable));
     CHECK_RES_DIE(res, "setsockopt IP_TRANSPARENT");
+    res = setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &enable, sizeof(enable));
+    CHECK_RES_DIE(res, "setsockopt SO_REUSEADDR");
 #else
     if (from.ai_addr->sa_family==AF_INET) { /* IPv4 */
-        res = setsockopt(fd, IPPROTO_IP, IP_BINDANY, &trans, sizeof(trans));
+        res = setsockopt(fd, IPPROTO_IP, IP_BINDANY, &enable, sizeof(enable));
         CHECK_RES_RETURN(res, "setsockopt IP_BINDANY", res);
 #ifdef IPV6_BINDANY
     } else { /* IPv6 */
-        res = setsockopt(fd, IPPROTO_IPV6, IPV6_BINDANY, &trans, sizeof(trans));
+        res = setsockopt(fd, IPPROTO_IPV6, IPV6_BINDANY, &enable, sizeof(enable));
         CHECK_RES_RETURN(res, "setsockopt IPV6_BINDANY", res);
 #endif /* IPV6_BINDANY */
     }
 #endif /* IP_TRANSPARENT / IP_BINDANY */
     res = bind(fd, from.ai_addr, from.ai_addrlen);
-    CHECK_RES_RETURN(res, "bind", res);
+    if (res == -1) {
+        if (errno != EADDRINUSE) {
+            print_message(msg_system_error, "%s:%d:%s:%d:%s\n", __FILE__, __LINE__,
+                        "bind", errno, strerror(errno));
+            return res;
+        }
+        res = setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &disable, sizeof(disable));
+        CHECK_RES_DIE(res, "setsockopt SO_REUSEADDR");
+        res = setsockopt(fd, IPPROTO_IP, IP_BIND_ADDRESS_NO_PORT, &enable, sizeof(enable));
+        CHECK_RES_RETURN(res, "setsockopt IP_BIND_ADDRESS_NO_PORT", res);
+        ((struct sockaddr_in *)from.ai_addr)->sin_port = 0;
+        res = bind(fd, from.ai_addr, from.ai_addrlen);
+        CHECK_RES_RETURN(res, "bind", res);
+        /*
+	 * There was a serious problem, when daisy-chaining programs using the same
+	 * ip transparent mechanism, as sslh uses. stunnel was mentioned in a previous 
+	 * comment. This problem should now be solved through the two methods, getting
+	 * a connection established:
+	 * In the first try, SO_REUSEADDR is set to socket, which will allow the same
+	 * IP-address:port tuple, as it is used by another application. The check for
+	 * inconsistency with other connections (same 4-value-tupel) is done at the 
+	 * moment, when the connection gets established.
+	 * If that fails, SO_REUSEADDR gets removed and IP_BIND_ADDRESS_NO_PORT get set.
+	 * This will search for a free port, which will not collide with current 
+	 * connections. Read more in this excellent blog-post: 
+	 * https://blog.cloudflare.com/how-to-stop-running-out-of-ephemeral-ports-and-start-to-love-long-lived-connections
+	 * The problem will still appear, if the another application in the daisy-chain
+	 * does not use similar mechanisms. In that case you must either pull this 
+	 * application at the beginning of the chain, or get it fixed.
+         */
+    }
 
     return 0;
 }
@@ -300,11 +401,8 @@ int set_nonblock(int fd)
 }
 
 
-/* Connect to first address that works and returns a file descriptor, or -1 if
- * none work.
- * If transparent proxying is on, use fd_from peer address on external address
- * of new file descriptor. */
-int connect_addr(struct connection *cnx, int fd_from, connect_blocking blocking)
+/* Connects to INET/INET6 domain sockets and return a fd */
+static int connect_inet(struct connection *cnx, int fd_from, connect_blocking blocking)
 {
     struct addrinfo *a, from;
     struct sockaddr_storage ss;
@@ -323,10 +421,10 @@ int connect_addr(struct connection *cnx, int fd_from, connect_blocking blocking)
         resolve_split_name(&(cnx->proto->saddr), cnx->proto->host,
                            cnx->proto->port);
     }
-
     for (a = cnx->proto->saddr; a; a = a->ai_next) {
-        /* When transparent, make sure both connections use the same address family */
-        if (transparent && a->ai_family != from.ai_addr->sa_family)
+        /* When transparent, make sure both connections use
+         * the same address family (e.g. IP4 on both sides) */
+        if (transparent && (a->ai_family != from.ai_addr->sa_family))
             continue;
         print_message(msg_connections_try, "trying to connect to %s family %d len %d\n",
                     sprintaddr(buf, sizeof(buf), a),
@@ -348,6 +446,7 @@ int connect_addr(struct connection *cnx, int fd_from, connect_blocking blocking)
 
             if (transparent) {
                 res = bind_peer(fd, fd_from);
+                if (res == -1) close(fd);
                 CHECK_RES_RETURN(res, "bind_peer", res);
             }
             res = connect(fd, a->ai_addr, a->ai_addrlen);
@@ -370,8 +469,65 @@ int connect_addr(struct connection *cnx, int fd_from, connect_blocking blocking)
     return -1;
 }
 
+/* Connects to AF_UNIX domain sockets */
+static int connect_unix(struct connection *cnx, int fd_from, connect_blocking blocking)
+{
+    struct sockaddr_storage ss;
+    struct sockaddr_un* sun = (struct sockaddr_un*)&ss;
+
+    int fd = socket(AF_UNIX, SOCK_STREAM, 0);
+    sun->sun_family = AF_UNIX;
+    strncpy(sun->sun_path, cnx->proto->host, sizeof(sun->sun_path)-1);
+
+    int res = connect(fd, (struct sockaddr*)sun, sizeof(*sun));
+    CHECK_RES_RETURN(res, "connect", res);
+
+    if (blocking == NON_BLOCKING) {
+        set_nonblock(fd);
+    }
+    return fd;
+}
+
+/* 
+ * Connect to the first backend server address that works and updates the *cnx
+ * object accordingly (in cnx->q[1].fd). Set that to -1 in case of failure.
+ *
+ * If transparent proxying is on, use fd_from peer address on external address
+ * of new file descriptor. 
+ * If proxyprotocol is used, write header on new backend server connection
+ * */
+void connect_addr(struct connection *cnx, int fd_from, connect_blocking blocking)
+{
+    int fd;
+
+    if (cnx->proto->is_unix) {
+        fd = connect_unix(cnx, fd_from, blocking);
+    } else {
+        fd = connect_inet(cnx, fd_from, blocking);
+    }
+    cnx->q[1].fd = fd;
+
+    if (cnx->proto->proxyprotocol_is_present) {
+        if (cnx->proto->proxyprotocol) {
+            pp_write_header(cnx->proto->proxyprotocol, cnx);
+            /* If pp_write_header() fails, it already logs a message and there is
+             * nothing much we can do. The server side will probably close the
+             * connection */
+        } else {
+            /* proxyprotocol == 0 means we remove a proxyprotocol header from
+             * the client-side, and log PP information (as it will be lost
+             * after sslh) */
+            int pp_len = pp_log_connection(cnx->q[1].begin_deferred_data,
+                                           cnx->q[1].deferred_data_size);
+            if (pp_len > 0) {
+                defer_skip(&cnx->q[1], pp_len);
+            }
+        }
+    }
+}
+
 /* Store some data to write to the queue later */
-int defer_write(struct queue *q, void* data, int data_size)
+int defer_write(struct queue *q, void* data, ssize_t data_size)
 {
     char *p;
     ptrdiff_t data_offset = q->deferred_data - q->begin_deferred_data;
@@ -383,8 +539,36 @@ int defer_write(struct queue *q, void* data, int data_size)
     q->begin_deferred_data = p;
     q->deferred_data = p + data_offset;
     p += data_offset + q->deferred_data_size;
-    q->deferred_data_size += data_size;
+    q->deferred_data_size += (int)data_size;
     memcpy(p, data, data_size);
+
+    return 0;
+}
+
+/* skip (remove) some data from the head of the queue */
+void defer_skip(struct queue *q, ssize_t data_size)
+{
+    q->deferred_data += data_size;
+    q->deferred_data_size -= data_size;
+}
+
+/* Store some data to write *before* what's already in the queue */
+int defer_write_before(struct queue *q, void* data, ssize_t data_size)
+{
+    char *p;
+
+    print_message(msg_fd, "writing deferred to beginning on fd %d\n", q->fd);
+    p = malloc(q->deferred_data_size + data_size);
+    CHECK_ALLOC(p, "malloc");
+
+    memcpy(p, data, data_size);
+    memcpy(p + data_size, q->deferred_data, q->deferred_data_size);
+
+    free(q->begin_deferred_data);
+
+    q->begin_deferred_data = p;
+    q->deferred_data = p;
+    q->deferred_data_size += (int)data_size;
 
     return 0;
 }
@@ -395,13 +579,13 @@ int defer_write(struct queue *q, void* data, int data_size)
  * */
 int flush_deferred(struct queue *q)
 {
-    int n;
+    ssize_t n;
 
     print_message(msg_fd, "flushing deferred data to fd %d\n", q->fd);
 
     n = write(q->fd, q->deferred_data, q->deferred_data_size);
     if (n == -1)
-        return n;
+        return (int)n;
 
     if (n == q->deferred_data_size) {
         /* All has been written -- release the memory */
@@ -412,10 +596,10 @@ int flush_deferred(struct queue *q)
     } else {
         /* There is data left */
         q->deferred_data += n;
-        q->deferred_data_size -= n;
+        q->deferred_data_size -= (int)n;
     }
 
-    return n;
+    return (int)n;
 }
 
 
@@ -438,6 +622,37 @@ void dump_connection(struct connection *cnx)
 }
 
 
+/* *cnx must have its proto field probed already.
+ * If required, increment the connection count for this protocol.
+ * Returns 1 if connection count is exceeded, 0 otherwise */
+int inc_proto_connections(struct sslhcfg_protocols_item* proto)
+{
+    proto->num_connections++;
+    if (proto->max_connections_is_present) {
+        print_message(msg_connections, "Proto %s +1: %d/%d cnx\n",
+                      proto->name,
+                      proto->num_connections,
+                      proto->max_connections);
+        if (proto->num_connections > proto->max_connections) {
+            print_message(msg_connections_error, "%s: too many connections, dropping\n", proto->name);
+            return 1;
+        }
+    }
+    return 0;
+}
+
+void dec_proto_connections(struct sslhcfg_protocols_item* proto)
+{
+    if (proto) {
+        proto->num_connections--;
+        print_message(msg_connections, "Proto %s -1: %d/%d cnx\n",
+                      proto->name,
+                      proto->num_connections,
+                      proto->max_connections);
+    }
+}
+
+
 /*
  * moves data from one fd to other
  *
@@ -450,7 +665,8 @@ void dump_connection(struct connection *cnx)
 int fd2fd(struct queue *target_q, struct queue *from_q)
 {
    char buffer[BUFSIZ];
-   int target, from, size_r, size_w;
+   int target, from;
+   ssize_t size_r, size_w;
 
    target = target_q->fd;
    from = from_q->fd;
@@ -462,6 +678,7 @@ int fd2fd(struct queue *target_q, struct queue *from_q)
            return FD_NODATA;
 
        case ECONNRESET:
+       case ENOTSOCK:
        case EPIPE:
            return FD_CNXCLOSED;
        }
@@ -494,7 +711,7 @@ int fd2fd(struct queue *target_q, struct queue *from_q)
 
    CHECK_RES_RETURN(size_w, "write", FD_CNXCLOSED);
 
-   return size_w;
+   return (int)size_w;
 }
 
 /* returns a string that prints the IP and port of the sockaddr */
@@ -502,6 +719,9 @@ char* sprintaddr(char* buf, size_t size, struct addrinfo *a)
 {
    char host[NI_MAXHOST], serv[NI_MAXSERV];
    int res;
+
+   memset(host, 0, sizeof(host));
+   memset(serv, 0, sizeof(serv));
 
    res = getnameinfo(a->ai_addr, a->ai_addrlen,
                host, sizeof(host),
@@ -529,7 +749,8 @@ char* sprintaddr(char* buf, size_t size, struct addrinfo *a)
 }
 
 /* Turns a hostname and port (or service) into a list of struct addrinfo
- * returns 0 on success, -1 otherwise and logs error
+ * On success, returns 0 
+ * On failure, returns -1 or one of getaddrinfo() codes
  */
 int resolve_split_name(struct addrinfo **out, char* host, char* serv)
 {
@@ -555,7 +776,7 @@ int resolve_split_name(struct addrinfo **out, char* host, char* serv)
 
    res = getaddrinfo(host, serv, &hint, out);
    if (res)
-      print_message(msg_system_error, "%s `%s:%s'\n", gai_strerror(res), host, serv);
+      print_message(msg_system_error, "resolve_split_name: %s `%s:%s'\n", gai_strerror(res), host, serv);
    return res;
 }
 
@@ -625,7 +846,7 @@ int get_connection_desc(struct connection_desc* desc, const struct connection *c
 
 void set_proctitle_shovel(struct connection_desc* desc, const struct connection *cnx)
 {
-#ifdef LIBBSD
+#ifdef HAVE_LIBBSD
     struct connection_desc d;
 
     if (!desc) {
@@ -650,7 +871,7 @@ void set_proctitle_shovel(struct connection_desc* desc, const struct connection 
  */
 int check_access_rights(int in_socket, const char* service)
 {
-#ifdef LIBWRAP
+#ifdef HAVE_LIBWRAP
     union {
         struct sockaddr saddr;
         struct sockaddr_storage ss;
@@ -677,8 +898,8 @@ int check_access_rights(int in_socket, const char* service)
         }
     }
 
-    if (!hosts_ctl(service, host, addr_str, STRING_UNKNOWN)) {
-        print_message(msg_connections, "connection from %s(%s): access denied", host, addr_str);
+    if (!hosts_ctl((char*)service, host, addr_str, STRING_UNKNOWN)) {
+        print_message(msg_connections, "connection from %s(%s): access denied\n", host, addr_str);
         close(in_socket);
         return -1;
     }
@@ -686,16 +907,23 @@ int check_access_rights(int in_socket, const char* service)
     return 0;
 }
 
+volatile sig_atomic_t received_sigchld;
+
+void sig_sigchld(int sig)
+{
+    received_sigchld = 1;
+}
+
+
 void setup_signals(void)
 {
     int res;
     struct sigaction action;
 
-    /* Request no SIGCHLD is sent upon termination of
-     * the children */
+    /* Set SIGCHLD to sig_sigchld() */
     memset(&action, 0, sizeof(action));
-    action.sa_handler = NULL;
-    action.sa_flags = SA_NOCLDWAIT;
+    action.sa_handler = sig_sigchld;
+    action.sa_flags = SA_NOCLDSTOP;
     res = sigaction(SIGCHLD, &action, NULL);
     CHECK_RES_DIE(res, "sigaction");
 
@@ -710,13 +938,12 @@ void setup_signals(void)
     action.sa_handler = SIG_IGN;
     res = sigaction(SIGPIPE, &action, NULL);
     CHECK_RES_DIE(res, "sigaction");
-
 }
 
 
 /* Ask OS to keep capabilities over a setuid(nonzero) */
 void set_keepcaps(int val) {
-#ifdef LIBCAP
+#if HAVE_LIBCAP
     int res;
     res = prctl(PR_SET_KEEPCAPS, val, 0, 0, 0);
     if (res) {
@@ -729,7 +956,7 @@ void set_keepcaps(int val) {
 /* Returns true if anything requires transparent proxying. */
 static int use_transparent(void)
 {
-#ifdef LIBCAP
+#if HAVE_LIBCAP
     if (cfg.transparent)
         return 1;
 
@@ -745,7 +972,7 @@ static int use_transparent(void)
  * IN: cap_net_admin: set to 1 to set CAP_NET_RAW
  * */
 void set_capabilities(int cap_net_admin) {
-#ifdef LIBCAP
+#if HAVE_LIBCAP
     int res;
     cap_t caps;
     cap_value_t cap_list[10];
@@ -823,28 +1050,48 @@ void drop_privileges(const char* user_name, const char* chroot_path)
     }
 }
 
+
+#ifndef O_NOFOLLOW
+#define O_NOFOLLOW 0
+#endif
+
 /* Writes my PID */
 void write_pid_file(const char* pidfile)
 {
-    FILE *f;
-    int res;
+    int fd;
+    char pidbuf[32];
+    size_t len, written = 0;
+    ssize_t res;
 
-    f = fopen(pidfile, "w");
-    if (!f) {
-        print_message(msg_system_error, "write_pid_file:%s:%s", pidfile, strerror(errno));
-        exit(3);
+    /* Format PID as string */
+    len = snprintf(pidbuf, sizeof(pidbuf), "%d\n", getpid());
+    if (len >= sizeof(pidbuf)) {
+        print_message(msg_system_error, "write_pid_file: PID string too long\n");
+        return;
     }
 
-    res = fprintf(f, "%d\n", getpid());
-    if (res < 0) {
-        print_message(msg_system_error, "write_pid_file:fprintf:%s", strerror(errno));
-        exit(3);
+    /* Open file with O_NOFOLLOW to prevent symlink attacks (Similar to CVE-2020-28935) */
+    fd = open(pidfile, O_WRONLY | O_CREAT | O_TRUNC | O_NOFOLLOW ,0644);
+
+    if (fd == -1) {
+        print_message(msg_system_error, "write_pid_file: %s: %s\n", pidfile, strerror(errno));
+        return;
     }
 
-    res = fclose(f);
-    if (res == EOF) {
-        print_message(msg_system_error, "write_pid_file:fclose:%s", strerror(errno));
-        exit(3);
+    /* Write PID to file with proper error handling */
+    while (written < len) {
+        res = write(fd, pidbuf + written, len - written);
+        if (res == -1) {
+            if (errno == EINTR || errno == EAGAIN)
+                continue;
+            print_message(msg_system_error, "write_pid_file: write: %s\n", strerror(errno));
+            break;
+        }
+        written += res;
+    }
+
+    /* Close file */
+    if (close(fd) == -1) {
+        print_message(msg_system_error, "write_pid_file: close: %s\n", strerror(errno));
     }
 }
-

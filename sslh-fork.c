@@ -1,7 +1,7 @@
 /*
    sslh-fork: forking server
 
-# Copyright (C) 2007-2021  Yves Rutschle
+# Copyright (C) 2007-2025  Yves Rutschle
 # 
 # This program is free software; you can redistribute it
 # and/or modify it under the terms of the GNU General Public
@@ -26,7 +26,7 @@
 #include "tcp-probe.h"
 #include "log.h"
 
-#ifdef LIBBSD
+#if HAVE_LIBBSD
 #include <bsd/unistd.h>
 #endif
 
@@ -69,17 +69,17 @@ int shovel(struct connection *cnx)
 
 /* Child process that finds out what to connect to and proxies 
  */
-void start_shoveler(int in_socket)
+static void start_shoveler(int in_socket, struct listen_endpoint* endpoint)
 {
    fd_set fds;
    struct timeval tv;
    int res = PROBE_AGAIN;
-   int out_socket;
    struct connection cnx;
    struct connection_desc desc;
 
    init_cnx(&cnx);
    cnx.q[0].fd = in_socket;
+   cnx.endpoint = endpoint;
 
    FD_ZERO(&fds);
    FD_SET(in_socket, &fds);
@@ -110,12 +110,10 @@ void start_shoveler(int in_socket)
    }
 
    /* Connect the target socket */
-   out_socket = connect_addr(&cnx, in_socket, BLOCKING);
-   CHECK_RES_DIE(out_socket, "connect");
+   connect_addr(&cnx, in_socket, BLOCKING);
+   CHECK_RES_DIE(cnx.q[1].fd, "connect");
 
    set_capabilities(0);
-
-   cnx.q[1].fd = out_socket;
 
    get_connection_desc(&desc, &cnx);
    log_connection(&desc, &cnx);
@@ -126,12 +124,28 @@ void start_shoveler(int in_socket)
    shovel(&cnx);
 
    close(in_socket);
-   close(out_socket);
+   close(cnx.q[1].fd);
    
    print_message(msg_fd, "connection closed down\n");
 
    exit(0);
 }
+
+
+void main_inetd(void)
+{
+    struct listen_endpoint endpoint = {0};
+    struct sslhcfg_listen_item endpoint_cfg = {0};
+
+    /* Empty configuration: no connection limits, not proxyprotocol... */
+    endpoint.endpoint_cfg = &endpoint_cfg;
+
+    close(fileno(stderr)); /* Make sure no error will go to client */
+    tcp_init();
+    start_shoveler(0, &endpoint);
+    exit(0);
+}
+
 
 static pid_t *listener_pid;
 static int listener_pid_number = 0;
@@ -147,7 +161,7 @@ void stop_listeners(int sig)
 
 void set_listen_procname(struct listen_endpoint *listen_socket)
 {
-#ifdef LIBBSD
+#if HAVE_LIBBSD
     int res;
     struct addrinfo addr;
     struct sockaddr_storage ss;
@@ -163,6 +177,42 @@ void set_listen_procname(struct listen_endpoint *listen_socket)
 #endif
 }
 
+static void mask_sigchld(void)
+{
+    struct sigaction action;
+
+    memset(&action, 0, sizeof(action));
+    action.sa_handler = NULL;
+    action.sa_flags = SA_NOCLDWAIT;
+    int res = sigaction(SIGCHLD, &action, NULL);
+    CHECK_RES_DIE(res, "sigaction");
+}
+
+
+extern volatile sig_atomic_t received_sigchld;
+/* EINTR, so we probably received a signal; check if it's SIGCHLD */
+static void process_signals(struct listen_endpoint* endpoint)
+{
+    int chld;
+    if (received_sigchld) {
+        received_sigchld = 0;
+        do {
+            chld = waitpid(-1, NULL, WNOHANG);
+            CHECK_RES_RETURN(chld, "waitpid", );
+            if (chld) {
+                endpoint->num_connections--;
+                print_message(msg_fd, "child died, %d concurrent connections remaining\n", endpoint->num_connections);
+            }
+        } while (chld);
+    }
+}
+
+/* At least MacOS does not know these two options, so define them to something
+ * equivalent for our use case */
+#ifndef ENONET
+#define ENONET EWOULDBLOCK
+#endif
+/* /MacOS kludge */
 
 /* TCP listener: connections, fork a child for each new connection 
  * IN: 
@@ -177,7 +227,39 @@ void tcp_listener(struct listen_endpoint* endpoint, int num_endpoints, int activ
 
     while (1) {
         in_socket = accept(endpoint[active_endpoint].socketfd, 0, 0);
-        print_message(msg_fd, "accepted fd %d\n", in_socket);
+        if (in_socket == -1) {
+            print_message(msg_system_error, "%s:%d:%s:%d:%s\n",
+                          __FILE__, __LINE__, "accept", errno, strerror(errno));
+            switch(errno) {
+            case ENETDOWN:  /* accept(2) cites all these errnos as "you should retry" */
+            case EPROTO:
+            case ENOPROTOOPT:
+            case EHOSTDOWN:
+            case ENONET:
+            case EHOSTUNREACH:
+            case EOPNOTSUPP:
+            case ENETUNREACH:
+            case ECONNABORTED:
+                continue;
+
+            case EINTR:
+                process_signals(endpoint);
+                continue;
+
+            default:  /* Otherwise, it's something wrong in our parameters, we fail */
+                return;
+            }
+        }
+        endpoint->num_connections++;
+        print_message(msg_fd, "accepted fd %d (%d concurrent connections)\n", in_socket, endpoint->num_connections);
+        if ((endpoint->endpoint_cfg->max_connections_is_present) 
+            && (endpoint->num_connections > endpoint->endpoint_cfg->max_connections)) 
+        {
+            print_message(msg_fd, "too many connection, reclosing fd %d\n", in_socket);
+            endpoint->num_connections--;
+            close(in_socket);
+            continue;
+        }
 
         switch(fork()) {
         case -1: print_message(msg_system_error, "fork failed: err %d: %s\n", errno, strerror(errno));
@@ -187,7 +269,7 @@ void tcp_listener(struct listen_endpoint* endpoint, int num_endpoints, int activ
                  /* Shoveler processes don't need to hog file descriptors */
                  for (i = 0; i < num_endpoints; i++)
                      close(endpoint[i].socketfd);
-                 start_shoveler(in_socket);
+                 start_shoveler(in_socket, endpoint);
                  exit(0);
 
         default: /* In parent process */
@@ -220,13 +302,17 @@ void main_loop(struct listen_endpoint listen_sockets[], int num_addr_listen)
         case 0:
             set_listen_procname(&listen_sockets[i]);
             if (listen_sockets[i].type == SOCK_DGRAM)
-                print_message(msg_config_error, "UDP not (yet?) supported in sslh-fork\n");
+                print_message(msg_config_error, "UDP not supported in sslh-fork\n");
             else
                 tcp_listener(listen_sockets, num_addr_listen, i);
+
+            exit(0);
 	    break;
 
-	/* We're in the parent, we don't need to do anything */
+	/* We're in the parent, which does nothing but wait to be killed by
+         * SIGTERM, which it will send to its children */
 	default:
+            mask_sigchld();
 	    break;
         }
     }
@@ -243,7 +329,7 @@ void main_loop(struct listen_endpoint listen_sockets[], int num_addr_listen)
     wait(NULL);
 }
 
-/* The actual main is in common.c: it's the same for both version of
+/* The actual main() is in sslh_main.c: it's the same for all versions of
  * the server
  */
 

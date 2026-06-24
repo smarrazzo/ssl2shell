@@ -30,19 +30,24 @@
 #include <pcre2.h>
 #endif
 
-#ifdef LIBBSD
-#include <bsd/unistd.h>
-#endif
-
 #include "common.h"
 #include "probe.h"
 #include "log.h"
+#include "tcp-probe.h"
+
+#if HAVE_LIBBSD
+#include <bsd/unistd.h>
+#endif
+
+#if HAVE_LIBCAP
+#include <sys/capability.h>
+#endif
 
 /* Constants for options that have no one-character shorthand */
 #define OPT_ONTIMEOUT   257
 
 static void printcaps(void) {
-#ifdef LIBCAP
+#if HAVE_LIBCAP
     cap_t caps;
     char* desc;
     ssize_t len;
@@ -60,23 +65,38 @@ static void printcaps(void) {
 
 static void printsettings(void)
 {
-    char buf[NI_MAXHOST];
+    char buf[NI_MAXHOST + 256]; /* 256 > " family %d %d" for reasonable ints */
     int i;
     struct sslhcfg_protocols_item *p;
     
     for (i = 0; i < cfg.protocols_len; i++ ) {
         p = &cfg.protocols[i];
+        if (p->is_unix) {
+            sprintf(buf, "unix socket: %s", p->host);
+        } else {
+            if (p->resolve_on_forward) {
+                strcpy(buf, "resolve on forward: ");
+                size_t len = strlen(buf);
+                sprintf(buf+len, "%s:%s", p->host, p->port);
+            } else {
+                sprintaddr(buf, sizeof(buf), p->saddr);
+                size_t len = strlen(buf);
+                sprintf(buf+len, " family %d %d",
+                        p->saddr->ai_family,
+                        p->saddr->ai_addr->sa_family);
+            }
+        }
         print_message(msg_config, 
-                      "%s addr: %s. libwrap service: %s log_level: %d family %d %d [%s] [%s] [%s]\n",
+                      "%s addr: %s. max_cnx: %d libwrap service: %s log_level: %d [%s] [%s] [%s] pp:%d\n",
                       p->name, 
-                      sprintaddr(buf, sizeof(buf), p->saddr), 
+                      buf,
+                      p->max_connections,
                       p->service,
                       p->log_level,
-                      p->saddr->ai_family,
-                      p->saddr->ai_addr->sa_family,
                       p->keepalive ? "keepalive" : "",
                       p->fork ? "fork" : "",
-                      p->transparent ? "transparent" : ""
+                      p->transparent ? "transparent" : "",
+                      p->proxyprotocol_is_present ? p->proxyprotocol : -1
                      );
     }
     print_message(msg_config, 
@@ -92,7 +112,8 @@ static void printsettings(void)
 static void setup_regex_probe(struct sslhcfg_protocols_item *p)
 #ifdef ENABLE_REGEX
 {
-    int num_patterns, i, error;
+    size_t num_patterns, i;
+    int error;
     pcre2_code** pattern_list;
     PCRE2_SIZE error_offset;
     PCRE2_UCHAR8 err_str[120];
@@ -114,12 +135,43 @@ static void setup_regex_probe(struct sslhcfg_protocols_item *p)
             exit(1);
         }
     }
+    probe_regex_matches = pcre2_match_data_create(1, NULL);
 }
 #else
 {
     return;
 }
 #endif
+
+/* Perform some fixups on configuration after reading it.
+ * if verbose is present, override all other verbose options
+ */
+void config_finish(struct sslhcfg_item* cfg)
+{
+    if (cfg->verbose) {
+        cfg->verbose_config = cfg->verbose;
+	cfg->verbose_config_error = cfg->verbose;
+	cfg->verbose_connections = cfg->verbose;
+	cfg->verbose_connections_try = cfg->verbose;
+	cfg->verbose_connections_error = cfg->verbose;
+	cfg->verbose_fd = cfg->verbose;
+	cfg->verbose_packets = cfg->verbose;
+	cfg->verbose_probe_info = cfg->verbose;
+	cfg->verbose_probe_error = cfg->verbose;
+	cfg->verbose_system_error = cfg->verbose;
+	cfg->verbose_int_error = cfg->verbose;
+    }
+}
+
+/* Checks that the UNIX socket specified exists and is accessible
+ * Dies otherwise
+ */
+static void check_access_unix_socket(struct sslhcfg_protocols_item* p)
+{
+    /* TODO */
+    return;
+}
+
 
 /* For each protocol in the configuration, resolve address and set up protocol
  * options if required
@@ -130,7 +182,9 @@ static void config_protocols()
     for (i = 0; i < cfg.protocols_len; i++) {
         struct sslhcfg_protocols_item* p = &(cfg.protocols[i]);
 
-        if (
+        if (p->is_unix) {
+            check_access_unix_socket(p);
+        } else if (
             !p->resolve_on_forward &&
             resolve_split_name(&(p->saddr), p->host, p->port)
         ) {
@@ -166,6 +220,62 @@ static void config_protocols()
     }
 }
 
+static void config_sanity_regex(const struct sslhcfg_protocols_item* prot)
+{
+    if (prot->regex_patterns_len > 0) {
+        if (strcmp(prot->name, "regex") != 0) {
+            print_message(msg_config_error, "name: \"%s\"; host: \"%s\"; port: \"%s\": "
+                          "regex_patterns setting is only applicable to `regex' probe. Ignoring setting.\n",
+                          prot->name, prot->host, prot->port);
+        }
+#ifndef ENABLE_REGEX
+        print_message(msg_config_error, "name: \"%s\"; host: \"%s\"; port: \"%s\": "
+                      "Uses regex_patterns, but libpcre2 support was not compiled in. Ignoring setting.\n",
+                      prot->name, prot->host, prot->port);
+#endif
+    }
+}
+
+/* If user specified proxyprotocol but it is not compiled in, it should not be
+ * ignored as the resulting configuration will most likely not work. In that
+ * case, die. */
+static void config_sanity_proxyprotocol(const struct sslhcfg_protocols_item* prot)
+{
+#ifndef HAVE_PROXYPROTOCOL
+    if (prot->proxyprotocol_is_present) {
+        print_message(msg_config_error, "name: \"%s\"; host: \"%s\"; port: \"%s\": "
+                      "Uses proxyprotocol, but libproxyprotocol support was not compiled in.\n",
+                      prot->name, prot->host, prot->port);
+        exit(1);
+    }
+#endif
+}
+
+static void config_sanity_listen_proxyprotocol(const struct sslhcfg_listen_item* endpoint)
+{
+#ifndef HAVE_PROXYPROTOCOL
+    if (endpoint->proxyprotocol) {
+        print_message(msg_config_error, "listen on host: \"%s\"; port: \"%s\": "
+                      "Uses proxyprotocol, but libproxyprotocol support was not compiled in.\n",
+                      endpoint->host, endpoint->port);
+        exit(1);
+    }
+#endif
+}
+
+
+/* If user specifies libwrap setting but it is not compiled in, it should
+ * result in a working configuration, but not what they expected, so warn */
+static void config_sanity_libwrap(const struct sslhcfg_protocols_item* prot)
+{
+#ifndef HAVE_LIBWRAP
+    if (prot->service_is_present) {
+        print_message(msg_config_error, "name: \"%s\"; host: \"%s\"; port: \"%s\": "
+                      "WARNING: `service' specified but libwrap not compiled in. Ignoring setting.\n",
+                      prot->name, prot->host, prot->port);
+    }
+#endif
+}
 
 void config_sanity_check(struct sslhcfg_item* cfg)
 {
@@ -179,8 +289,12 @@ void config_sanity_check(struct sslhcfg_item* cfg)
     }
 #endif
 
+    for (i = 0; i < cfg->listen_len; i++) {
+        config_sanity_listen_proxyprotocol(&cfg->listen[i]);
+    }
+
     for (i = 0; i < cfg->protocols_len; ++i) {
-        if (strcmp(cfg->protocols[i].name, "tls")) {
+        if (strcmp(cfg->protocols[i].name, "tls") != 0) {
             if (cfg->protocols[i].sni_hostnames_len) {
                 print_message(msg_config_error, "name: \"%s\"; host: \"%s\"; port: \"%s\": "
                               "Config option sni_hostnames is only applicable for tls\n",
@@ -194,6 +308,10 @@ void config_sanity_check(struct sslhcfg_item* cfg)
                 exit(1);
             }
         }
+
+        config_sanity_regex(&cfg->protocols[i]);
+        config_sanity_proxyprotocol(&cfg->protocols[i]);
+        config_sanity_libwrap(&cfg->protocols[i]);
 
         if (cfg->protocols[i].is_udp) {
             if (cfg->protocols[i].tfo_ok) {
@@ -211,24 +329,76 @@ void config_sanity_check(struct sslhcfg_item* cfg)
     }
 }
 
+/* Connect stdin, stdout, stderr to /dev/null. It is better to keep them around
+ * so they do not get re-used by socket descriptors, and accidently used by
+ * some library code.
+ */
+void close_std(void)
+{
+    int newfd;
+
+    if ((newfd = open("/dev/null", O_RDWR))) {
+        dup2 (newfd, STDIN_FILENO);
+        dup2 (newfd, STDOUT_FILENO);
+        dup2 (newfd, STDERR_FILENO);
+        /* close the helper handle, as this is now unnecessary */
+        close(newfd);
+    } else {
+        print_message(msg_system_error, "Error closing standard filehandles for background daemon\n");
+    }
+}
+
+static void print_version(void)
+{
+    printf("%s %s\n", server_type, VERSION);
+#ifdef ENABLE_SANITIZER
+    printf("ENABLE_SANITIZER\n");
+#endif
+#ifdef ENABLE_REGEX
+    printf("ENABLE_REGEX\n");
+#endif
+#ifdef LIBCONFIG
+    printf("LIBCONFIG\n");
+#endif
+#ifdef SYSTEMD
+    printf("SYSTEMD\n");
+#endif
+#ifdef COV_TEST
+    printf("COV_TEST\n");
+#endif
+#ifdef HAVE_LIBWRAP
+    printf("HAVE_LIBWRAP\n");
+#endif
+#ifdef HAVE_LANDLOCK
+    printf("HAVE_LANDLOCK\n");
+#endif
+#ifdef HAVE_PROXYPROTOCOL
+    printf("HAVE_PROXYPROTOCOL\n");
+#endif
+#ifdef HAVE_LIBCAP
+    printf("HAVE_LIBCAP\n");
+#endif
+#ifdef HAVE_LIBBSD
+    printf("HAVE_LIBBSD\n");
+#endif
+}
 
 int main(int argc, char *argv[], char* envp[])
 {
-   extern char *optarg;
-   extern int optind;
    int res, num_addr_listen;
    struct listen_endpoint *listen_sockets;
 
-#ifdef LIBBSD
+#if HAVE_LIBBSD
    setproctitle_init(argc, argv, envp);
 #endif
 
    memset(&cfg, 0, sizeof(cfg));
    res = sslhcfg_cl_parse(argc, argv, &cfg);
    if (res) exit(6);
+   config_finish(&cfg);
 
    if (cfg.version) {
-       printf("%s %s\n", server_type, VERSION);
+       print_version();
        exit(0);
    }
 
@@ -237,9 +407,7 @@ int main(int argc, char *argv[], char* envp[])
 
    if (cfg.inetd)
    {
-       close(fileno(stderr)); /* Make sure no error will go to client */
-       start_shoveler(0);
-       exit(0);
+       main_inetd();  /* Does not return */
    }
 
    printsettings();
@@ -255,6 +423,7 @@ int main(int argc, char *argv[], char* envp[])
 
    if (!cfg.foreground) {
        if (fork() > 0) exit(0); /* Detach */
+       close_std();
 
        /* New session -- become group leader */
        if (getuid() == 0) {
@@ -276,6 +445,7 @@ int main(int argc, char *argv[], char* envp[])
 
    if (cfg.user || cfg.chroot)
        drop_privileges(cfg.user, cfg.chroot);
+   setup_landlock();
 
    printcaps();
 

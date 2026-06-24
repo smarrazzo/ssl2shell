@@ -45,8 +45,15 @@ int probe_client_protocol(struct connection *cnx)
 
     if (n > 0) {
         defer_write(&cnx->q[1], buffer, n);
-        return probe_buffer(cnx->q[1].begin_deferred_data,
-                            cnx->q[1].deferred_data_size,
+
+        size_t pp_len = 0;
+        if (cnx->endpoint->endpoint_cfg->proxyprotocol) {
+            pp_len = pp_header_len(cnx->q[1].begin_deferred_data,
+                                   cnx->q[1].deferred_data_size);
+        }
+
+        return probe_buffer(cnx->q[1].begin_deferred_data + pp_len,
+                            cnx->q[1].deferred_data_size - pp_len,
                             tcp_protocols, tcp_protocols_len,
                             &cnx->proto
                             );
@@ -60,12 +67,13 @@ int probe_client_protocol(struct connection *cnx)
 
 static void tcp_protocol_list_init(void)
 {
+    tcp_protocols = calloc(cfg.protocols_len, sizeof(tcp_protocols));
+    CHECK_ALLOC(tcp_protocols, "tcp_protocols");
     for (int i = 0; i < cfg.protocols_len; i++) {
         struct sslhcfg_protocols_item* p = &cfg.protocols[i];
         if (!p->is_udp) {
+            tcp_protocols[tcp_protocols_len] = p;
             tcp_protocols_len++;
-            tcp_protocols = realloc(tcp_protocols, tcp_protocols_len * sizeof(*tcp_protocols));
-            tcp_protocols[tcp_protocols_len-1] = p;
         }
     }
 }
