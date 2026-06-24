@@ -5,8 +5,16 @@
  * enough for the macros to adapt (http://support.microsoft.com/kb/111855)
  */
 #ifdef __CYGWIN__
+#undef FD_SETSIZE
 #define FD_SETSIZE 4096
 #endif
+
+/* Cygwin does not define some symbols
+ * */
+#ifndef SA_NOCLDWAIT
+#define SA_NOCLDWAIT 0
+#endif
+
 
 #define _GNU_SOURCE
 #include <sys/types.h>
@@ -33,6 +41,11 @@
 #include <sys/capability.h>
 #endif
 
+#ifdef __APPLE__
+#include <AvailabilityMacros.h>
+#endif
+
+#include "config.h"
 #include "version.h"
 
 #define MAX(a, b)  (((a) > (b)) ? (a) : (b))
@@ -103,6 +116,7 @@ struct connection {
     struct sslhcfg_protocols_item* proto; /* Where to connect to */
 
     /* SOCK_STREAM */
+    struct listen_endpoint* endpoint; /* Client-facing listen fd */
     enum connection_state state;
     time_t probe_timeout;
 
@@ -112,7 +126,7 @@ struct connection {
     struct queue q[2];
 
     /* SOCK_DGRAM */
-    struct sockaddr client_addr; /* Contains the remote client address */
+    struct sockaddr_storage client_addr; /* Contains the remote client address */
     socklen_t addrlen;
 
     int local_endpoint; /* Contains the local address */
@@ -131,6 +145,9 @@ struct connection {
 struct listen_endpoint {
     int socketfd;       /* file descriptor of listening socket */
     int type;           /* SOCK_DGRAM | SOCK_STREAM */
+    int family;         /* AF_INET | AF_UNIX */
+    int num_connections; /* How many active connections on this endpoint */
+    struct sslhcfg_listen_item* endpoint_cfg; /* the configuration item that corresponds to this endpoint */
 };
 
 #define FD_CNXCLOSED    0
@@ -153,7 +170,7 @@ typedef enum {
 /* common.c */
 void init_cnx(struct connection *cnx);
 int set_nonblock(int fd);
-int connect_addr(struct connection *cnx, int fd_from, connect_blocking blocking);
+void connect_addr(struct connection *cnx, int fd_from, connect_blocking blocking);
 int fd2fd(struct queue *target, struct queue *from);
 char* sprintaddr(char* buf, size_t size, struct addrinfo *a);
 void resolve_name(struct addrinfo **out, char* fullname);
@@ -167,20 +184,35 @@ void drop_privileges(const char* user_name, const char* chroot_path);
 void set_capabilities(int cap_net_admin);
 void write_pid_file(const char* pidfile);
 void dump_connection(struct connection *cnx);
+int inc_proto_connections(struct sslhcfg_protocols_item* cnx);
+void dec_proto_connections(struct sslhcfg_protocols_item* cnx);
 int resolve_split_name(struct addrinfo **out, char* hostname, char* port);
 
 int start_listen_sockets(struct listen_endpoint *sockfd[]);
 
-int defer_write(struct queue *q, void* data, int data_size);
+int defer_write(struct queue *q, void* data, ssize_t data_size);
+void defer_skip(struct queue *q, ssize_t data_size);
+int defer_write_before(struct queue *q, void* data, ssize_t data_size);
 int flush_deferred(struct queue *q);
 
 extern struct sslhcfg_item cfg;
 extern struct addrinfo *addr_listen;
 extern const char* server_type;
 
+#if defined(__APPLE__) && (MAC_OS_X_VERSION_MIN_REQUIRED < 1080)
+extern int hosts_ctl();
+#endif
+
 /* sslh-fork.c */
-void start_shoveler(int);
+void main_inetd(void);
 
 void main_loop(struct listen_endpoint *listen_sockets, int num_addr_listen);
+
+/* landlock.c */
+void setup_landlock(void);
+
+
+/* sslh-fork.c or processes.c, depending on the model */
+void setup_sigchld(void);
 
 #endif

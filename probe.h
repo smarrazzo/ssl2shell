@@ -6,6 +6,7 @@
 #include "common.h"
 #include "tls.h"
 #include "log.h"
+#include "proxyprotocol.h"
 
 typedef enum {
     PROBE_NEXT,  /* Enough data, probe failed -- it's some other protocol */
@@ -65,5 +66,12 @@ void set_ontimeout(const char* name);
 struct sslhcfg_protocols_item* timeout_protocol(void);
 
 void hexdump(msg_info, const char*, unsigned int);
+
+#ifdef ENABLE_REGEX
+#define PCRE2_CODE_UNIT_WIDTH 8
+#include <pcre2.h>
+extern pcre2_match_data* probe_regex_matches;
+#endif
+
 
 #endif

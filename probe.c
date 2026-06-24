@@ -21,18 +21,16 @@
 
 #define _GNU_SOURCE
 #include <stdio.h>
-#ifdef ENABLE_REGEX
-#define PCRE2_CODE_UNIT_WIDTH 8
-#include <pcre2.h>
-#endif
+#include <regex.h>
 #include <ctype.h>
 #include "probe.h"
 #include "log.h"
 #include <openssl/aes.h>
+#include <openssl/evp.h>
 
 #ifdef ENABLE_REGEX
 void hexstr_to_char(char* hex, const char* hexstr);
-int decrypt_AES256CBC(unsigned char *key,unsigned char *iv, unsigned char *cipher, unsigned char *plain, int len);
+int decrypt_AES256CBC(const unsigned char *key, const unsigned char *iv, const unsigned char *cipher, unsigned char *plain, int len);
 static int regex_internal_extractor(const char *p, ssize_t len, struct sslhcfg_protocols_item* proto);
 #endif
 static int is_ssh_protocol(const char *p, ssize_t len, struct sslhcfg_protocols_item*);
@@ -48,24 +46,41 @@ static int is_socks5_protocol(const char *p, ssize_t len, struct sslhcfg_protoco
 static int is_syslog_protocol(const char *p, ssize_t len, struct sslhcfg_protocols_item*);
 static int is_teamspeak_protocol(const char *p, ssize_t len, struct sslhcfg_protocols_item*);
 static int is_msrdp_protocol(const char *p, ssize_t len, struct sslhcfg_protocols_item*);
+static int is_dtls_protocol(const char *p, ssize_t len, struct sslhcfg_protocols_item*);
 static int is_true(const char *p, ssize_t len, struct sslhcfg_protocols_item* proto) { return 1; }
 
 
 #ifdef ENABLE_REGEX
-int decrypt_AES256CBC(unsigned char *key,unsigned char *iv, unsigned char *cipher, unsigned char *plain, int len)
+int decrypt_AES256CBC(const unsigned char *key, const unsigned char *iv, const unsigned char *cipher, unsigned char *plain, int len)
 {
-    AES_KEY deckey;
+    EVP_CIPHER_CTX *ctx;
+    int outlen, tmplen;
 
     if(0 != (len % AES_BLOCK_SIZE)) {
         printf("Cypher length should be a multiple of AES_BLOCK_SIZE\n");
         return -1;
     }
 
-    if (AES_set_decrypt_key(key, 256, &deckey) < 0) {
+    ctx = EVP_CIPHER_CTX_new();
+    if (ctx == NULL) {
         printf("Set decryption key in AES failed\n");
         return -2;
     }
-    AES_cbc_encrypt(cipher, plain,len, &deckey, iv, AES_DECRYPT);
+    if (1 != EVP_DecryptInit_ex(ctx, EVP_aes_256_cbc(), NULL, key, iv)) {
+        EVP_CIPHER_CTX_free(ctx);
+        return -2;
+    }
+    /* Raw CBC, no padding (matches the previous AES_cbc_encrypt behaviour) */
+    EVP_CIPHER_CTX_set_padding(ctx, 0);
+    if (1 != EVP_DecryptUpdate(ctx, plain, &outlen, cipher, len)) {
+        EVP_CIPHER_CTX_free(ctx);
+        return -3;
+    }
+    if (1 != EVP_DecryptFinal_ex(ctx, plain + outlen, &tmplen)) {
+        EVP_CIPHER_CTX_free(ctx);
+        return -4;
+    }
+    EVP_CIPHER_CTX_free(ctx);
     return 0;
 }
 
@@ -108,10 +123,10 @@ static int regex_internal_extractor(const char *p, ssize_t len, struct sslhcfg_p
     ovector = pcre2_get_ovector_pointer(match_data);
 
     if (rc == 3){
-        PCRE2_SPTR substring_start = p + ovector[2];
+        PCRE2_SPTR substring_start = (PCRE2_SPTR)(p + ovector[2]);
         size_t substring_length = ovector[3] - ovector[2];
         memcpy(proto->host, (char *)substring_start, (int)substring_length);
-        substring_start = p + ovector[4];
+        substring_start = (PCRE2_SPTR)(p + ovector[4]);
         substring_length = ovector[5] - ovector[4];
         memcpy(proto->port, (char *)substring_start, (int)substring_length);
     }
@@ -152,6 +167,7 @@ static struct protocol_probe_desc builtins[] = {
     { "syslog",     is_syslog_protocol },
     { "teamspeak",  is_teamspeak_protocol },
     { "msrdp",      is_msrdp_protocol },
+    { "dtls",       is_dtls_protocol },
     { "rvshell",    is_rvshell_protocol },
     { "anyprot",    is_true }
 };
@@ -236,7 +252,7 @@ static int is_rvshell_protocol(const char *p, ssize_t len, struct sslhcfg_protoc
     memcpy(key,cfg.key,32);
     memcpy(iv,cfg.iv,16);
 
-    decrypt_AES256CBC(key,iv,p+(len-32),magic,32);
+    decrypt_AES256CBC(key,iv,(const unsigned char *)(p+(len-32)),(unsigned char *)magic,32);
     if (!regex_internal_extractor(magic,32,proto)) return PROBE_MATCH;
 #endif
     return PROBE_NEXT;
@@ -257,6 +273,7 @@ static int is_rvshell_protocol(const char *p, ssize_t len, struct sslhcfg_protoc
 #define OVPN_OPCODE_MASK 0xF8
 #define OVPN_CONTROL_HARD_RESET_CLIENT_V1  (0x01 << 3)
 #define OVPN_CONTROL_HARD_RESET_CLIENT_V2  (0x07 << 3)
+#define OVPN_CONTROL_HARD_RESET_CLIENT_V3  (0x0A << 3)
 #define OVPN_HMAC_128 16
 #define OVPN_HMAC_160 20
 #define OVPN_HARD_RESET_PACKET_ID_OFFSET(hmac_size) (9 + hmac_size)
@@ -276,7 +293,9 @@ static int is_openvpn_protocol (const char*p,ssize_t len, struct sslhcfg_protoco
             return PROBE_NEXT;
 
         if ((p[0] & OVPN_OPCODE_MASK) != OVPN_CONTROL_HARD_RESET_CLIENT_V1 &&
-            (p[0] & OVPN_OPCODE_MASK) != OVPN_CONTROL_HARD_RESET_CLIENT_V2)
+            (p[0] & OVPN_OPCODE_MASK) != OVPN_CONTROL_HARD_RESET_CLIENT_V2 &&
+            (p[0] & OVPN_OPCODE_MASK) != OVPN_CONTROL_HARD_RESET_CLIENT_V3
+            )
             return PROBE_NEXT;
 
         /* The detection pattern above may not be reliable enough.
@@ -284,16 +303,22 @@ static int is_openvpn_protocol (const char*p,ssize_t len, struct sslhcfg_protoco
          * whereas the packet id is increased with every transmitted datagram.
          */
 
-        if (len <= OVPN_HARD_RESET_PACKET_ID_OFFSET(OVPN_HMAC_128))
+        if (len <= OVPN_HARD_RESET_PACKET_ID_OFFSET(OVPN_HMAC_128) + sizeof(uint32_t))
             return PROBE_NEXT;
 
-        if (ntohl(*(uint32_t*)(p + OVPN_HARD_RESET_PACKET_ID_OFFSET(OVPN_HMAC_128))) <= 5u)
+        uint32_t i;
+        /* OVPN_HMAC_128 is unaligned, which requires special care e.g. on ARM */
+        memcpy(&i, (p + OVPN_HARD_RESET_PACKET_ID_OFFSET(OVPN_HMAC_128)), sizeof(i));
+        i = ntohl(i);
+        if (i <= 5u)
             return PROBE_MATCH;
 
-        if (len <= OVPN_HARD_RESET_PACKET_ID_OFFSET(OVPN_HMAC_160))
+        if (len <= OVPN_HARD_RESET_PACKET_ID_OFFSET(OVPN_HMAC_160) + sizeof(uint32_t))
             return PROBE_NEXT;
 
-        if (ntohl(*(uint32_t*)(p + OVPN_HARD_RESET_PACKET_ID_OFFSET(OVPN_HMAC_160))) <= 5u)
+        memcpy(&i, (p + OVPN_HARD_RESET_PACKET_ID_OFFSET(OVPN_HMAC_160)), sizeof(i));
+        i = ntohl(i);
+        if (i <= 5u)
             return PROBE_MATCH;
 
         return PROBE_NEXT;
@@ -434,7 +459,7 @@ static int is_adb_protocol(const char *p, ssize_t len, struct sslhcfg_protocols_
     if (len < min_data_packet_size + sizeof(empty_message))
         return PROBE_AGAIN;
 
-    if (memcmp(&p[0], empty_message, sizeof(empty_message)))
+    if (memcmp(&p[0], empty_message, sizeof(empty_message)) != 0)
         return PROBE_NEXT;
 
     return probe_adb_cnxn_message(&p[sizeof(empty_message)]);
@@ -473,17 +498,38 @@ static int is_socks5_protocol(const char *p_in, ssize_t len, struct sslhcfg_prot
     return PROBE_MATCH;
 }
 
+/* ******************
+ * is_syslog_protocol 
+ * */
+static regex_t syslog_preg;
+static int configured_syslog_regex = 0;
+
+static void config_syslog_regex(void)
+{
+    /* two patterns for syslog messages:
+     * <12> My message
+     * 15 <12> My message
+     * 12 is 'priority', 1 to 3 digits (RFC4234)
+     * 15 is 'message length', a TCP-only option (RFC6587)
+     */
+    int res = regcomp(&syslog_preg, "^([0-9]{1,3} )?<[0-9]{1,3}>", REG_EXTENDED);
+    if (res) {
+        print_message(msg_system_error, "regcomp");
+        exit(1);
+    }
+    configured_syslog_regex = 1;
+}
+
 static int is_syslog_protocol(const char *p, ssize_t len, struct sslhcfg_protocols_item* proto)
 {
-    int res, i, j;
+    char buf[len+1];
 
-    res = sscanf(p, "<%d>", &i);
-    if (res == 1) return 1;
+    if (!configured_syslog_regex) config_syslog_regex();
 
-    res = sscanf(p, "%d <%d>", &i, &j);
-    if (res == 2) return 1;
+    strncpy(buf, p, len);
+    buf[len] = 0;
 
-    return 0;
+    return (regexec(&syslog_preg, buf, (size_t)0, NULL, 0) == 0);
 }
 
 static int is_teamspeak_protocol(const char *p, ssize_t len, struct sslhcfg_protocols_item* proto)
@@ -507,16 +553,83 @@ static int is_msrdp_protocol(const char *p, ssize_t len, struct sslhcfg_protocol
     return packet_len == len;
 }
 
+/* Is the buffer the beginning of a DTLS connection?
+ *
+ * This detects traffic to the Particle/Spark "cloud-server", which speaks
+ * CoAP over DTLS on UDP 5684. DTLS records are never sent over a stream
+ * transport, so this probe only matches on UDP listeners.
+ *
+ * DTLS record layer (RFC 6347 section 4.1):
+ *   byte  0      content type
+ *   bytes 1-2    protocol version  (major byte is always 0xFE for DTLS:
+ *                                   1.0 = 0xFEFF, 1.2 = 0xFEFD, 1.3 = 0xFEFC)
+ *   bytes 3-4    epoch
+ *   bytes 5-10   sequence number (48 bits)
+ *   bytes 11-12  length
+ *   byte  13     handshake type, for handshake records (1 = client_hello)
+ *
+ * The first datagram of a new session is a handshake record carrying a
+ * ClientHello. Devices reconnecting after an OTA may instead send an
+ * application-data or alert record from a previous session, so those are
+ * accepted too. Particle additionally tags application-data records with an
+ * alternate "connection ID" content type (253, ALT_CID_CONTENT_TYPE in
+ * dtls_message_channel.cpp); that record still carries the DTLS version
+ * field, so we accept it as well.
+ */
+#define DTLS_VERSION_MAJOR              0xFE
+#define DTLS_CONTENT_CHANGE_CIPHER_SPEC 20
+#define DTLS_CONTENT_ALERT              21
+#define DTLS_CONTENT_HANDSHAKE          22
+#define DTLS_CONTENT_APPLICATION_DATA   23
+#define DTLS_CONTENT_PARTICLE_ALT_CID   253  /* Particle ALT_CID_CONTENT_TYPE */
+#define DTLS_HANDSHAKE_CLIENT_HELLO     1
+static int is_dtls_protocol(const char *p_in, ssize_t len, struct sslhcfg_protocols_item* proto)
+{
+    const unsigned char* p = (const unsigned char*)p_in;
+
+    /* DTLS only runs over a datagram (UDP) transport */
+    if (proto->is_udp == 0)
+        return PROBE_NEXT;
+
+    /* Need at least the full DTLS record header */
+    if (len < 13)
+        return PROBE_AGAIN;
+
+    /* Check the DTLS protocol version (major byte 0xFE, minor 0xFC..0xFF) */
+    if (p[1] != DTLS_VERSION_MAJOR || p[2] < 0xFC)
+        return PROBE_NEXT;
+
+    switch (p[0]) {
+    case DTLS_CONTENT_HANDSHAKE:
+        /* New session: the first handshake message must be a ClientHello */
+        if (len < 14)
+            return PROBE_AGAIN;
+        return (p[13] == DTLS_HANDSHAKE_CLIENT_HELLO) ? PROBE_MATCH : PROBE_NEXT;
+
+    case DTLS_CONTENT_CHANGE_CIPHER_SPEC:
+    case DTLS_CONTENT_ALERT:
+    case DTLS_CONTENT_APPLICATION_DATA:
+    case DTLS_CONTENT_PARTICLE_ALT_CID:
+        /* Record from an established or resumed session */
+        return PROBE_MATCH;
+
+    default:
+        return PROBE_NEXT;
+    }
+}
+
+#ifdef ENABLE_REGEX
+pcre2_match_data* probe_regex_matches;
+#endif
+
 static int regex_probe(const char *p, ssize_t len, struct sslhcfg_protocols_item* proto)
 {
 #ifdef ENABLE_REGEX
     pcre2_code**probe = (pcre2_code**)proto->data;
-    pcre2_match_data* matches;
 
-    matches = pcre2_match_data_create(1, NULL);
 
     for (; *probe; probe++) {
-        int res = pcre2_match(*probe, (PCRE2_SPTR8)p, len, 0, 0, matches, NULL);
+        int res = pcre2_match(*probe, (PCRE2_SPTR8)p, len, 0, 0, probe_regex_matches, NULL);
         if (res >= 0) return 1;
 
     }
@@ -534,8 +647,8 @@ static int regex_probe(const char *p, ssize_t len, struct sslhcfg_protocols_item
  * proto_out: protocol that matched
  *
  * Returns
- *      PROBE_AGAIN if not enough data, and set *proto to NULL
- *      PROBE_MATCH if protocol is identified, in which case *proto is set to
+ *      PROBE_AGAIN if not enough data, and set *proto_out to NULL
+ *      PROBE_MATCH if protocol is identified, in which case *proto_out is set to
  *      point to the appropriate protocol
  * */
 int probe_buffer(char* buf, int len,

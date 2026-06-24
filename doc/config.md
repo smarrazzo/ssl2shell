@@ -76,10 +76,10 @@ Configuration goes like this on the server side, using `stunnel3`:
 Capabilities support
 --------------------
 
-On Linux (only?), you can compile sslh with `USELIBCAP=1` to
-make use of POSIX capabilities; this will save the required
-capabilities needed for transparent proxying for unprivileged
-processes.
+On Linux (only?), you can compile sslh with `USELIBCAP=1` set 
+in the Makefile to make use of POSIX capabilities; this will 
+save the required capabilities needed for transparent proxying 
+for unprivileged processes.
 
 Alternatively, you may use filesystem capabilities instead
 of starting sslh as root and asking it to drop privileges.
@@ -92,19 +92,18 @@ to the executable:
 
 	sudo setcap cap_net_bind_service,cap_net_raw+pe sslh-select
 
-Then you can run sslh-select as an unpriviledged user, e.g.:
+Then you can run sslh-select as an unprivileged user, e.g.:
 
 	sslh-select -p myname:443 --ssh localhost:22 --tls localhost:443
 
 Transparent proxy support
 -------------------------
 
-Transparent proxying allows the target server to see the
-original client IP address, i.e. `sslh` becomes invisible.
-This makes it easier to use the server's logs, and potential
-IP-based banning ability.
+Transparent proxying is described in its own
+[document](tproxy.md).
 
-Set up can get complicated, so it has its own [document](tproxy.md).
+It might be easier to configure `sslh` to use Proxyprotocol
+if the backend server supports it.
 
 Systemd Socket Activation
 -------------------------
@@ -167,7 +166,7 @@ This parses the /etc/sslh.cfg (or /etc/sslh/sslh.cfg file if that exists
 instead) configuration file and dynamically generates a socket file to use.
 
 This will also merge with any sslh.socket.d drop in configuration but will be 
-overriden by a /etc/systemd/system/sslh.socket file.
+overridden by a /etc/systemd/system/sslh.socket file.
 
 To use the generator place it in /usr/lib/systemd/system-generators and then
 call systemctl daemon-reload after any changes to /etc/sslh.cfg to generate 
@@ -196,8 +195,17 @@ will wait for incoming UDP packets, run the probes in the
 usual fashion, and forward packets to the appropriate
 target. `sslh` will then remember the association between
 remote host to target server for 60 seconds by default,
-which can be overriden with `udp_timeout`. This allows to
+which can be overridden with `udp_timeout`. This allows to
 process both single-datagram protocols such as DNS, and
 connection-based protocols such as QUIC.
 
 An example for supporting QUIC is shown in `example.cfg`.
+
+
+Limiting file descriptor consumption
+------------------------------------
+
+There are various mechanisms to limit the number of
+concurrent connections, which allows to limit the usage of
+file descriptor. This is described in a separate
+[guide](max_connections.md).

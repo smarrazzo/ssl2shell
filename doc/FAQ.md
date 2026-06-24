@@ -7,24 +7,25 @@ doesn't work, report how what was suggested here went.
 It's also worth reading [how to ask
 questions](http://www.catb.org/~esr/faqs/smart-questions.html)
 before posting on the mailing list or opening an issue in
-Github.
+GitHub.
 
 Getting more info
 =================
 
-In general, if something doesn't work, you'll want to run
-`sslh` with lots of logging, and the logging directly in
-the terminal (Otherwise, logs are sent to `syslog`, and
-usually end up in `/var/log/auth.log`). You will achieve
-this by running `sslh` in foreground with verbose:
+There are several `verbose` options that each enable a set
+of messages, each related to some event type. See
+`example.cfg` for a list of them.
+
+If something doesn't work, you'll want to run `sslh` with
+lots of logging, and the logging directly in the terminal
+(Otherwise, logs are sent to `syslog`, and usually end up in
+`/var/log/auth.log`). There is a general `--verbose` option
+that will allow you to enable all messages:
 
 ```
-sslh -v 1 -f -F myconfig.cfg
+sslh -v 3 -f -F myconfig.cfg
 ```
 
-Higher values of `verbose` produce more information. 1 is
-usually sufficient. 2 will also print incoming packets used
-for probing.
 
 forward to [PROBE] failed:connect: Connection refused
 =====================================================
@@ -167,3 +168,17 @@ protocols: (
                 ["^(GET|POST|PUT|OPTIONS|DELETE|HEADER) [^ ]* HTTP/[0-9.]*[\r\n]*Host: host_B.acme"] }
 );
 ```
+
+I get an error "Too many open files"
+====================================
+
+`sslh` used up all the file descriptors it can (1024 by default in Linux),
+which means it cannot create new connections. On some
+systems, you can increase the process limit with `ulimit -n
+2048` (for example). Maybe more usefully, you can limit the
+connection usage based on protocols or listening address, as
+described in the [max_connections](max_connections.md)
+guide.
+
+
+

@@ -25,6 +25,8 @@
 #include "probe.h"
 #include "log.h"
 
+
+
 /* Removes cnx from probing list */
 static void remove_probing_cnx(struct loop_info* fd_info, struct connection* cnx)
 {
@@ -67,14 +69,16 @@ static void shovel(struct connection *cnx, int active_fd, struct loop_info* fd_i
 }
 
 
-/* Returns the queue index that contains the specified file descriptor */
+/* Returns the queue index that contains the specified file descriptor.
+ * This is called by the *_process functions, which got cnx from the fd, so it
+ * is impossible for fd to not be cnx, hence we die if it happens */
 static int active_queue(struct connection* cnx, int fd)
 {
     if (cnx->q[0].fd == fd) return 0;
     if (cnx->q[1].fd == fd) return 1;
 
     print_message(msg_int_error, "file descriptor %d not found in connection object\n", fd);
-    return -1;
+    exit(1);
 }
 
 /* Process a TCP read event on the specified file descriptor */
@@ -116,16 +120,52 @@ void tcp_read_process(struct loop_info* fd_info,
     }
 }
 
+
+
+/* *cnx must have its endpoint field filled;
+ * Increment the connection count for the listen endpoint.
+ * Return 1 if connection count is exceeded, 0 otherwise */
+static int inc_listen_connections(struct listen_endpoint* endpoint)
+{
+    endpoint->num_connections++;
+    if (endpoint->endpoint_cfg->max_connections_is_present) {
+        int num_cnx = endpoint->num_connections;
+        int max_cnx = endpoint->endpoint_cfg->max_connections;
+
+        print_message(msg_connections, "Endpoint %d +1: %d/%d cnx\n",
+                      endpoint->socketfd, num_cnx, max_cnx);
+        if (num_cnx > max_cnx) {
+            print_message(msg_connections_error, "Endpoint %d: too many connections, dropping\n", endpoint->socketfd);
+            return 1;
+        }
+    }
+    return 0;
+}
+
+void dec_listen_connections(struct listen_endpoint* endpoint)
+{
+    if (endpoint) {
+        endpoint->num_connections--;
+        print_message(msg_connections, "Endpoint %d -1: %d/%d cnx\n",
+                      endpoint->socketfd,
+                      endpoint->num_connections,
+                      endpoint->endpoint_cfg->max_connections);
+    }
+}
+
+
 /* Accepts a connection from the main socket and assigns it to an empty slot.
  * If no slots are available, allocate another few. If that fails, drop the
  * connexion */
-struct connection* accept_new_connection(int listen_socket, struct loop_info* fd_info)
+struct connection* accept_new_connection(struct listen_endpoint* endpoint, struct loop_info* fd_info)
 {
     int in_socket, res;
+    int listen_socket = endpoint->socketfd;
 
     print_message(msg_fd, "accepting from %d\n", listen_socket);
 
     in_socket = accept(listen_socket, 0, 0);
+    if ((in_socket == -1) && (errno == EAGAIN)) return NULL;   /* Do not log if we're just retring next iteration */
     CHECK_RES_RETURN(in_socket, "accept", NULL);
 
     res = set_nonblock(in_socket);
@@ -139,11 +179,15 @@ struct connection* accept_new_connection(int listen_socket, struct loop_info* fd
         close(in_socket);
         return NULL;
     }
+    cnx->endpoint = endpoint;
+    if (inc_listen_connections(endpoint)) {
+        tidy_connection(cnx, fd_info);
+        return NULL;
+    }
 
     add_probing_cnx(fd_info, cnx);
     return cnx;
 }
-
 
 /* Connect queue 1 of connection to SSL; returns new file descriptor */
 static int connect_queue(struct connection* cnx,
@@ -151,7 +195,7 @@ static int connect_queue(struct connection* cnx,
 {
     struct queue *q = &cnx->q[1];
 
-    q->fd = connect_addr(cnx, cnx->q[0].fd, NON_BLOCKING);
+    connect_addr(cnx, cnx->q[0].fd, NON_BLOCKING);
     if (q->fd != -1) {
         log_connection(NULL, cnx);
         flush_deferred(q);
@@ -225,7 +269,6 @@ static void shovel_single(struct connection *cnx)
 static void connect_proxy(struct connection *cnx)
 {
     int in_socket;
-    int out_socket;
 
     /* Minimize the file descriptor value to help select() */
     in_socket = dup(cnx->q[0].fd);
@@ -236,22 +279,76 @@ static void connect_proxy(struct connection *cnx)
         cnx->q[0].fd = in_socket;
     }
 
-    /* Connect the target socket */
-    out_socket = connect_addr(cnx, in_socket, BLOCKING);
-    CHECK_RES_DIE(out_socket, "connect");
-
-    cnx->q[1].fd = out_socket;
+    /* Connect the backend server socket */
+    connect_addr(cnx, in_socket, BLOCKING);
+    CHECK_RES_DIE(cnx->q[1].fd, "connect");
 
     log_connection(NULL, cnx);
 
     shovel_single(cnx);
 
     close(in_socket);
-    close(out_socket);
+    close(cnx->q[1].fd);
 
     print_message(msg_fd, "connection closed down\n");
 
     exit(0);
+}
+
+
+/* This ensures the kernel will close the listening socket when the
+ * parent process closes; otherwise, the listening socket is kept
+ * around by the inactive file descriptor in the child */
+void close_listen_endpoints(struct loop_info* loop)
+{
+    struct listen_endpoint* listen_sockets = loop->listen_sockets;
+    watchers* w = loop->watchers;
+
+    for (int i = 0; i < loop->num_addr_listen; i++) {
+        int fd = listen_sockets[i].socketfd;
+        watchers_del_read(w, fd);
+        watchers_del_write(w, fd);
+        close(fd);
+    }
+}
+
+
+/* Close all connections except specified.
+ * This saves file descriptors and allocated memory when forking */
+void tidy_other_connections(struct loop_info* fd_info, struct connection* keep_cnx)
+{
+    struct connection* cnx;
+    cnx_collection* cnx_coll = fd_info->collection;
+
+    for (int i = 0; i < collection_max_fd(cnx_coll); i++) {
+        cnx = collection_get_cnx_from_fd(cnx_coll, i);
+        if (cnx && (cnx != keep_cnx))
+            tidy_connection(cnx, fd_info);
+    }
+}
+
+/* Forks a shoveler process for one protocol */
+void fork_shoveling_process(struct loop_info* fd_info, struct connection* cnx) {
+    pid_t pid;
+
+    if (!has_space_to_fork(fd_info)) {
+        print_message(msg_connections_error, "forking for %s: out of hash space\n", cnx->proto->name);
+        return;
+    }
+
+    switch (pid = fork()) {
+    case 0:  /* child */
+        close_listen_endpoints(fd_info);
+        tidy_other_connections(fd_info, cnx);
+        connect_proxy(cnx);
+        exit(0);
+    case -1: print_message(msg_system_error, "fork failed: err %d: %s\n", errno, strerror(errno));
+             break;
+    default: /* parent */
+             remember_child_data(fd_info, cnx, pid);
+             watcher_sigchld(fd_info, cnx, pid);
+             break;
+    }
 }
 
 /* Process read activity on a socket in probe state 
@@ -261,43 +358,37 @@ static void connect_proxy(struct connection *cnx)
 void probing_read_process(struct connection* cnx,
                                  struct loop_info* fd_info)
 {
-    int res;
-
     /* If timed out it's SSH, otherwise the client sent
      * data so probe the protocol */
     if ((cnx->probe_timeout < time(NULL))) {
         cnx->proto = timeout_protocol();
         print_message(msg_fd, "timed out, connect to %s\n", cnx->proto->name);
     } else {
-        res = probe_client_protocol(cnx);
-        if (res == PROBE_AGAIN)
-            return;
+        if (probe_client_protocol(cnx) == PROBE_AGAIN)
+            return; /* Not enough data, wait for more */
     }
 
     remove_probing_cnx(fd_info, cnx);
     cnx->state = ST_SHOVELING;
 
+    if (inc_proto_connections(cnx->proto)) {
+        tidy_connection(cnx, fd_info);
+        return;
+    }
+
     /* libwrap check if required for this protocol */
     if (cnx->proto->service &&
         check_access_rights(cnx->q[0].fd, cnx->proto->service)) {
         tidy_connection(cnx, fd_info);
-        res = -1;
     } else if (cnx->proto->fork) {
-        switch (fork()) {
-        case 0:  /* child */
-            /* TODO: close all file descriptors except 2 */
-            /* free(cnx); */
-            connect_proxy(cnx);
-            exit(0);
-        case -1: print_message(msg_system_error, "fork failed: err %d: %s\n", errno, strerror(errno));
-                 break;
-        default: /* parent */
-                 break;
-        }
+        fork_shoveling_process(fd_info, cnx);
+        /* Free file descriptor (used only in child), but do not reduce connection
+         * counts */
+        cnx->proto = NULL;
+        cnx->endpoint = NULL;
         tidy_connection(cnx, fd_info);
-        res = -1;
     } else {
-        res = connect_queue(cnx, fd_info);
+        connect_queue(cnx, fd_info);
     }
 }
 

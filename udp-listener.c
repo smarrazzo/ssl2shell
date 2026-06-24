@@ -27,19 +27,23 @@
 #include "sslh-conf.h"
 #include "udp-listener.h"
 
+
 /* Incoming connections are of course all received on a single socket. Create a
  * hash that associates (incoming sockaddr) => struct connection*, so finding
  * the connection related to an incoming packet is fast.
  */
 
 
+typedef struct connection* hash_item;
+#include "hash.h"
+
 
 static int cnx_cmp(struct connection* cnx1, struct connection* cnx2)
 {
-    struct sockaddr* addr1 = &cnx1->client_addr;
+    struct sockaddr_storage* addr1 = &cnx1->client_addr;
     socklen_t addrlen1 = cnx1->addrlen;
 
-    struct sockaddr* addr2 = &cnx2->client_addr;
+    struct sockaddr_storage* addr2 = &cnx2->client_addr;
     socklen_t addrlen2 = cnx2->addrlen;
 
     if (addrlen1 != addrlen2) return -1;
@@ -52,13 +56,13 @@ static int cnx_cmp(struct connection* cnx1, struct connection* cnx2)
  * lowest bytes of remote port */
 static int hash_make_key(hash_item new)
 {
-    struct sockaddr* addr = &new->client_addr;
+    struct sockaddr_storage* addr = &new->client_addr;
     //socklen_t addrlen = new->addrlen;
     struct sockaddr_in* addr4;
     struct sockaddr_in6* addr6;
     int out;
 
-    switch (addr->sa_family) {
+    switch (((struct sockaddr*)addr)->sa_family) {
     case AF_INET:
         addr4 = (struct sockaddr_in*)addr;
         out = addr4->sin_port;
@@ -86,13 +90,14 @@ static void udp_protocol_list_init(void)
         if (p->is_udp) {
             udp_protocols_len++;
             udp_protocols = realloc(udp_protocols, udp_protocols_len * sizeof(*udp_protocols));
+            CHECK_ALLOC(udp_protocols, "realloc");
             udp_protocols[udp_protocols_len-1] = p;
         }
     }
 }
 
 /* Configuration sanity check for UDP:
- * - If there is a listening addres, there must be at least one target
+ * - If there is a listening address, there must be at least one target
  */
 static void udp_sanity_check(void)
 {
@@ -119,6 +124,7 @@ static void udp_sanity_check(void)
 void udp_init(struct loop_info* fd_info)
 {
     fd_info->hash_sources = hash_init(cfg.udp_max_connections, &hash_make_key, &cnx_cmp);
+    CHECK_ALLOC(fd_info->hash_sources, "hash_init");
 
     udp_protocol_list_init();
     udp_sanity_check();
@@ -129,7 +135,7 @@ void udp_init(struct loop_info* fd_info)
  * If yes, returns file descriptor of connection
  * If not, returns -1
  * */
-static int known_source(hash* h, struct sockaddr* addr, socklen_t addrlen)
+static int known_source(hash* h, struct sockaddr_storage* addr, socklen_t addrlen)
 {
     struct connection search;
     search.client_addr = *addr;
@@ -221,6 +227,28 @@ static void mark_active(struct connection* cnx)
 }
 
 
+/* Creates a new non-blocking socket */
+static int nonblocking_socket(struct sslhcfg_protocols_item* proto)
+{
+    int res;
+
+    if (proto->resolve_on_forward) {
+        res = resolve_split_name(&(proto->saddr), proto->host,
+                                 proto->port);
+        if (res) return -1;
+    }
+
+    int out = socket(proto->saddr->ai_family, SOCK_DGRAM, 0);
+    res = set_nonblock(out);
+    if (res == -1) {
+        print_message(msg_system_error, "%s:%d:%s:%d:%s\n", __FILE__, __LINE__, "udp:socket:nonblock", errno, strerror(errno));
+        close(out);
+        return -1;
+    }
+    return out;
+}
+
+
 /* Process UDP coming from outside (client towards server)
  * If it's a new source, probe; otherwise, forward to previous target 
  * Returns: newly allocate connections, for new connections
@@ -229,35 +257,33 @@ static void mark_active(struct connection* cnx)
 struct connection* udp_c2s_forward(int sockfd, struct loop_info* fd_info)
 {
     char addr_str[NI_MAXHOST+1+NI_MAXSERV+1];
-    struct sockaddr src_addr;
+    struct sockaddr_storage src_addr;
     struct addrinfo addrinfo;
     struct sslhcfg_protocols_item* proto;
     cnx_collection* collection = fd_info->collection;
     struct connection* cnx;
     ssize_t len;
     socklen_t addrlen;
-    int res, target, out = -1;
-    char data[65536]; /* Theoritical max is 65507 (https://en.wikipedia.org/wiki/User_Datagram_Protocol).
+    ssize_t res;
+    int target, out = -1;
+    char data[65536]; /* Theoretical max is 65507 (https://en.wikipedia.org/wiki/User_Datagram_Protocol).
                          This will do.  Dynamic allocation is possible with the MSG_PEEK flag in recvfrom(2), but that'd imply
                          malloc/free overhead for each packet, when really 64K is not that much */
 
 
-    udp_timeouts(fd_info);
-
     addrlen = sizeof(src_addr);
-    len = recvfrom(sockfd, data, sizeof(data), 0, &src_addr, &addrlen);
-    if (len < 0) {
-        perror("recvfrom");
-        return NULL;
-    }
+    len = recvfrom(sockfd, data, sizeof(data), 0, (struct sockaddr*) &src_addr, &addrlen);
+    if ((len == -1) && ((errno == EAGAIN) || (errno == EWOULDBLOCK))) return NULL;
+    CHECK_RES_DIE(len, "udp_listener/c2s/recvfrom");
+
     target = known_source(fd_info->hash_sources, &src_addr, addrlen);
-    addrinfo.ai_addr = &src_addr;
+    addrinfo.ai_addr = (struct sockaddr*) &src_addr;
     addrinfo.ai_addrlen = addrlen;
     print_message(msg_probe_info, "received %ld UDP from %d:%s\n", 
                   len, target, sprintaddr(addr_str, sizeof(addr_str), &addrinfo));
 
     if (target == -1) {
-        res = probe_buffer(data, len, udp_protocols, udp_protocols_len, &proto);
+        res = probe_buffer(data, (int)len, udp_protocols, udp_protocols_len, &proto);
         /* First version: if we can't work out the protocol from the first
          * packet, drop it. Conceivably, we could store several packets to
          * run probes on packet sets */
@@ -266,9 +292,8 @@ struct connection* udp_c2s_forward(int sockfd, struct loop_info* fd_info)
             return NULL;
         }
 
-        out = socket(proto->saddr->ai_family, SOCK_DGRAM, 0);
-        res = set_nonblock(out);
-        CHECK_RES_RETURN(res, "udp:socket:nonblock", NULL);
+        out = nonblocking_socket(proto);
+        if (out == -1) return NULL;
         struct connection* cnx = collection_alloc_cnx_from_fd(collection, out);
         if (!cnx) return NULL;
         target = out;
@@ -279,9 +304,14 @@ struct connection* udp_c2s_forward(int sockfd, struct loop_info* fd_info)
         cnx->addrlen = addrlen;
         cnx->local_endpoint = sockfd;
 
+        if (inc_proto_connections(cnx->proto)) {
+            tidy_connection(cnx, fd_info);
+            return NULL;
+        }
+
         res = new_source(fd_info->hash_sources, cnx);
         if (res == -1) {
-            print_message(msg_connections_error, "Out of hash space for new incoming UDP connection -- increaѕe udp_max_connections");
+            print_message(msg_connections_error, "Out of hash space for new incoming UDP connection -- increase udp_max_connections");
             collection_remove_cnx(collection, cnx);
             return NULL;
         }
@@ -302,13 +332,13 @@ void udp_s2c_forward(struct connection* cnx)
 {
     int sockfd = cnx->target_sock;
     char data[65536];
-    int res;
+    ssize_t res;
 
     res = recvfrom(sockfd, data, sizeof(data), 0, NULL, NULL);
     if ((res == -1) && ((errno == EAGAIN) || (errno == EWOULDBLOCK))) return;
-    CHECK_RES_DIE(res, "udp_listener/recvfrom");
+    CHECK_RES_DIE(res, "udp_listener/s2c/recvfrom");
     res = sendto(cnx->local_endpoint, data, res, 0,
-                 &cnx->client_addr, cnx->addrlen);
+                 (struct sockaddr*)&cnx->client_addr, cnx->addrlen);
     mark_active(cnx);
 }
 

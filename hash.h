@@ -4,8 +4,6 @@
 /* You will need to typedef a pointer type to hash_item before including this
  * .h */
 
-typedef struct hash hash;
-
 /* Function that returns a key (index) for a given item. The key must be always
  * the same for an item. It doesn't need to be bounded (hash.c masks it for you) */
 typedef int (*hash_make_key_fn)(hash_item item);
@@ -15,6 +13,7 @@ typedef int (*hash_cmp_item_fn)(hash_item item1, hash_item item2);
 
 hash* hash_init(int hash_size, hash_make_key_fn make_key, hash_cmp_item_fn cmp_item);
 
+int hash_insertable(hash* h); /* Is it possible to insert: any space left? */
 int hash_insert(hash* h, hash_item new);
 int hash_remove(hash* h, hash_item item);
 
