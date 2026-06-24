@@ -9,6 +9,7 @@ RUN apk add --no-cache \
         'libconfig-dev' \
         'make' \
         'musl-dev' \
+        'openssl-dev' \
         'pcre2-dev' \
         'perl' \
         'git' \
@@ -46,6 +47,8 @@ COPY --from=build "/sslh/sslh-select" "/usr/local/bin/sslh"
 
 RUN apk add --no-cache \
         'libconfig' \
+        'libcrypto3' \
+        'libssl3' \
         'pcre2' \
         'iptables' \
         'ip6tables' \
